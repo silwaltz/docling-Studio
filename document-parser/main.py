@@ -420,6 +420,11 @@ from api.graph import router as graph_router  # noqa: E402
 
 app.include_router(graph_router)
 
+# Document Q&A chat — direct Ollama /api/chat, no heavy deps.
+from api.chat import router as chat_router  # noqa: E402
+
+app.include_router(chat_router)
+
 # Live reasoning (docling-agent runner). Router is mounted unconditionally so
 # the route is introspectable in OpenAPI; the handler itself 503s when
 # `REASONING_ENABLED` is off or the deps aren't installed.
@@ -494,6 +499,7 @@ async def health() -> HealthResponse:
         # actual Ollama reachability is checked lazily at call-time to avoid
         # blocking health checks on the LLM host.
         reasoning_available=runner is not None and runner.is_available,
+        chat_available=settings.chat_enabled,
         # 0.6.1 — Surface flags (#257).
         studio_mode_enabled=settings.studio_mode_enabled,
         rag_pipeline_enabled=settings.rag_pipeline_enabled,

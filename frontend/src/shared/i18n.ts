@@ -32,6 +32,7 @@ const messages: Messages = {
     'breadcrumb.mode.parse': 'Parse',
     'breadcrumb.mode.chunk': 'Chunk',
     'breadcrumb.mode.ingest': 'Ingest',
+    'breadcrumb.mode.ask': 'Ask',
 
     // Feature flags (0.6.0 — #210)
     'flags.allModesDisabled':
@@ -222,6 +223,8 @@ const messages: Messages = {
     // + New analysis — in-place trigger (#266)
     'newAnalysis.title': 'Nouvelle analyse',
     'newAnalysis.running': 'Analyse en cours…',
+    'newAnalysis.cancel': 'Annuler',
+    'newAnalysis.run': 'Lancer l\'analyse',
 
     // Chunking
     'studio.prepare': 'Préparer',
@@ -389,7 +392,16 @@ const messages: Messages = {
     'ask.questionLabel': 'Question',
     'ask.questionPlaceholder': 'Ex\u00a0: Quelles sont les obligations du fournisseur\u00a0?',
     'ask.modelConfig': 'Mod\u00e8le (optionnel)',
-    'ask.modelPlaceholder': 'gpt-oss:20b',
+    'ask.modelPlaceholder': 'gemma4:e4b',
+    'ask.model': 'Modèle',
+    'ask.clear': 'Effacer',
+    'ask.send': 'Envoyer',
+    'ask.inputPlaceholder': 'Posez une question sur ce document… (Entrée pour envoyer)',
+    'ask.emptyTitle': 'Posez une question',
+    'ask.emptySub': 'Le document analysé est utilisé comme contexte. Vous pouvez demander des résumés, des explications ou des suggestions de modification.',
+    'ask.suggestion1': 'Extrait toutes les adresses, noms de sociétés, informations de transport et descriptions des marchandises au format JSON.',
+    'ask.downloadJson': 'Télécharger JSON',
+    // unused legacy key kept for compat:
     'ask.modelHint': 'Mod\u00e8le Ollama. Laisser vide pour le d\u00e9faut serveur.',
     'ask.run': 'Lancer',
     'ask.running': 'Reasoning en cours\u2026',
@@ -402,6 +414,7 @@ const messages: Messages = {
     'workspace.tabs.parse': 'Parse',
     'workspace.tabs.chunk': 'Chunk',
     'workspace.tabs.ingest': 'Ingest',
+    'workspace.tabs.ask': 'Ask',
     'workspace.backToLibrary': 'Retour \u00e0 la biblioth\u00e8que',
     'workspace.modeDisabled': 'Mode d\u00e9sactiv\u00e9 pour ce d\u00e9ploiement',
 
@@ -674,6 +687,7 @@ const messages: Messages = {
     'breadcrumb.mode.parse': 'Parse',
     'breadcrumb.mode.chunk': 'Chunk',
     'breadcrumb.mode.ingest': 'Ingest',
+    'breadcrumb.mode.ask': 'Ask',
 
     // Feature flags (0.6.0 — #210)
     'flags.allModesDisabled':
@@ -857,6 +871,8 @@ const messages: Messages = {
     // + New analysis — in-place trigger (#266)
     'newAnalysis.title': 'New analysis',
     'newAnalysis.running': 'Analyzing…',
+    'newAnalysis.cancel': 'Cancel',
+    'newAnalysis.run': 'Run analysis',
 
     'studio.prepare': 'Prepare',
     'studio.ingest': 'Ingest',
@@ -1013,23 +1029,32 @@ const messages: Messages = {
     'inspect.retry': 'Retry',
     'inspect.noElements': 'No elements — run an analysis to generate structure.',
 
-    // Ask tab (#242)
+    // Ask tab (#242 + chat extension)
     'ask.questionLabel': 'Question',
     'ask.questionPlaceholder': 'e.g. What are the supplier obligations?',
     'ask.modelConfig': 'Model (optional)',
-    'ask.modelPlaceholder': 'gpt-oss:20b',
+    'ask.modelPlaceholder': 'gemma4:e4b',
     'ask.modelHint': 'Ollama model name. Leave empty to use the server default.',
     'ask.run': 'Run',
     'ask.running': 'Reasoning…',
     'ask.answerLabel': 'Answer',
     'ask.noAnalysis': 'No analysis available',
     'ask.noAnalysisSub': 'Analyze this document in Studio before asking a question.',
+    'ask.model': 'Model',
+    'ask.clear': 'Clear chat',
+    'ask.send': 'Send',
+    'ask.inputPlaceholder': 'Ask a question about this document… (Enter to send)',
+    'ask.emptyTitle': 'Ask about this document',
+    'ask.emptySub': 'The analysed document is used as context. Ask for summaries, explanations, or suggestions on what to change.',
+    'ask.suggestion1': 'Extract all addresses, company names, shipping information, and goods descriptions from the document as JSON format.',
+    'ask.downloadJson': 'Download JSON',
 
     // Doc workspace (#216, #218 — switcher refactored in #263, modes renamed
     // in #264, Compare slot replaced by Ingest in #225)
     'workspace.tabs.parse': 'Parse',
     'workspace.tabs.chunk': 'Chunk',
     'workspace.tabs.ingest': 'Ingest',
+    'workspace.tabs.ask': 'Ask',
     'workspace.backToLibrary': 'Back to library',
     'workspace.modeDisabled': 'Mode disabled for this deployment',
 

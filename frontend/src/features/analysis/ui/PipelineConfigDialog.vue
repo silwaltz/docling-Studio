@@ -1,0 +1,473 @@
+<template>
+  <Teleport to="body">
+    <div v-if="open" class="dialog-backdrop" @click.self="onCancel">
+      <div class="dialog" role="dialog" aria-modal="true" data-e2e="pipeline-config-dialog">
+        <header class="dialog-header">
+          <h2 class="dialog-title">{{ t('newAnalysis.title') }}</h2>
+          <button class="dialog-close" :title="t('newAnalysis.cancel')" @click="onCancel">✕</button>
+        </header>
+
+        <div class="dialog-body">
+          <!-- Pipeline options -->
+          <div class="config-section">
+            <label class="config-label">{{ t('config.pipeline') }}</label>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" v-model="local.do_ocr" class="toggle-input" />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.ocr') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.ocrHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" v-model="local.do_table_structure" class="toggle-input" />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.tableStructure') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.tableStructureHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-sub-option" v-if="local.do_table_structure">
+              <label class="config-label-sm">{{ t('config.tableMode') }}</label>
+              <select class="config-select" v-model="local.table_mode">
+                <option value="accurate">{{ t('config.tableModeAccurate') }}</option>
+                <option value="fast">{{ t('config.tableModeFast') }}</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Enrichment options -->
+          <div class="config-section">
+            <label class="config-label">{{ t('config.enrichment') }}</label>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" v-model="local.do_code_enrichment" class="toggle-input" />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.codeEnrichment') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.codeEnrichmentHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" v-model="local.do_formula_enrichment" class="toggle-input" />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.formulaEnrichment') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.formulaEnrichmentHint') }}</span>?
+              </span>
+            </div>
+          </div>
+
+          <!-- Picture options -->
+          <div class="config-section">
+            <label class="config-label">{{ t('config.pictures') }}</label>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  v-model="local.do_picture_classification"
+                  class="toggle-input"
+                />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.pictureClassification') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.pictureClassificationHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  v-model="local.do_picture_description"
+                  class="toggle-input"
+                />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.pictureDescription') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.pictureDescriptionHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  v-model="local.generate_picture_images"
+                  class="toggle-input"
+                />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.generatePictureImages') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.generatePictureImagesHint') }}</span>?
+              </span>
+            </div>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  v-model="local.generate_page_images"
+                  class="toggle-input"
+                />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.generatePageImages') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.generatePageImagesHint') }}</span>?
+              </span>
+            </div>
+
+            <div
+              class="config-sub-option"
+              v-if="local.generate_picture_images || local.generate_page_images"
+            >
+              <label class="config-label-sm">{{ t('config.imagesScale') }}</label>
+              <select class="config-select" v-model.number="local.images_scale">
+                <option :value="0.5">0.5x</option>
+                <option :value="1.0">1.0x</option>
+                <option :value="1.5">1.5x</option>
+                <option :value="2.0">2.0x</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <footer class="dialog-footer">
+          <button class="btn-secondary" @click="onCancel">{{ t('newAnalysis.cancel') }}</button>
+          <button class="btn-primary" @click="onConfirm">{{ t('newAnalysis.run') }}</button>
+        </footer>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { reactive, watch } from 'vue'
+import type { PipelineOptions } from '../../../shared/types'
+import { useI18n } from '../../../shared/i18n'
+
+const props = defineProps<{ open: boolean }>()
+const emit = defineEmits<{
+  (e: 'cancel'): void
+  (e: 'confirm', options: PipelineOptions): void
+}>()
+
+const { t } = useI18n()
+
+const DEFAULT_OPTIONS: PipelineOptions = {
+  do_ocr: true,
+  do_table_structure: true,
+  table_mode: 'accurate',
+  do_code_enrichment: false,
+  do_formula_enrichment: false,
+  do_picture_classification: false,
+  do_picture_description: false,
+  generate_picture_images: false,
+  generate_page_images: false,
+  images_scale: 1.0,
+}
+
+const local = reactive<PipelineOptions>({ ...DEFAULT_OPTIONS })
+
+watch(
+  () => props.open,
+  (opened) => {
+    if (opened) Object.assign(local, DEFAULT_OPTIONS)
+  },
+)
+
+function onCancel(): void {
+  emit('cancel')
+}
+
+function onConfirm(): void {
+  emit('confirm', { ...local })
+}
+</script>
+
+<style scoped>
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.dialog-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.dialog-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: all var(--transition);
+}
+
+.dialog-close:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.dialog-body {
+  padding: 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.btn-secondary {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.btn-primary {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: white;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: filter var(--transition);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+/* Config form styles (mirrors StudioPage config panel) */
+.config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.config-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: all var(--transition);
+}
+
+.toggle-input:checked + .toggle-switch {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle-input:checked + .toggle-switch::after {
+  left: 18px;
+  background: white;
+}
+
+.toggle-text {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.config-hint {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-light);
+  font-size: 10px;
+  color: var(--text-muted);
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.config-hint:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.config-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -8px;
+  width: 240px;
+  padding: 8px 10px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  pointer-events: none;
+}
+
+.config-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 12px;
+  border: 5px solid transparent;
+  border-top-color: var(--border-light);
+}
+
+.config-hint:hover .config-tooltip {
+  display: block;
+}
+
+.config-sub-option {
+  padding-left: 46px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-label-sm {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.config-select {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23A1A1AA' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+
+.config-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.config-select option {
+  background: var(--bg-surface);
+  color: var(--text);
+}
+</style>

@@ -50,6 +50,11 @@ class Settings:
     llm_provider_type: str = "ollama"
     ollama_host: str = "http://localhost:11434"
     reasoning_model_id: str = "gpt-oss:20b"  # matches docling-agent's example_05
+    # Document Q&A chat — direct Ollama /api/chat call using the document's
+    # extracted markdown as context. No heavy deps required beyond httpx.
+    # Set CHAT_ENABLED=true and CHAT_MODEL_ID to a model already pulled in Ollama.
+    chat_enabled: bool = True
+    chat_model_id: str = "gemma4:e4b"  # any model pulled in Ollama
     opensearch_default_limit: int = 1000  # max chunks returned by get_chunks
     embedding_dimension: int = 384  # Granite Embedding 30M / all-MiniLM-L6-v2
     upload_dir: str = "./uploads"
@@ -167,6 +172,9 @@ class Settings:
             llm_provider_type=os.environ.get("LLM_PROVIDER_TYPE", "ollama"),
             ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
             reasoning_model_id=os.environ.get("REASONING_MODEL_ID", "gpt-oss:20b"),
+            chat_enabled=os.environ.get("CHAT_ENABLED", "true").lower()
+            in ("1", "true", "yes", "on"),
+            chat_model_id=os.environ.get("CHAT_MODEL_ID", "gemma4:e4b"),
             opensearch_default_limit=int(os.environ.get("OPENSEARCH_DEFAULT_LIMIT", "1000")),
             embedding_dimension=int(os.environ.get("EMBEDDING_DIMENSION", "384")),
             upload_dir=os.environ.get("UPLOAD_DIR", "./uploads"),

@@ -15,6 +15,7 @@ interface HealthResponse {
   maxFileSizeMb?: number
   ingestionAvailable?: boolean
   reasoningAvailable?: boolean
+  chatAvailable?: boolean
   // 0.6.1 — Surface master flags (#257). Optional for backward compat:
   // studio defaults to false (production target), rag pipeline to true.
   studioModeEnabled?: boolean
@@ -31,6 +32,7 @@ export type FeatureFlag =
   | 'disclaimer'
   | 'ingestion'
   | 'reasoning'
+  | 'chat'
   | 'studioMode'
   | 'ragPipeline'
   | 'inspectMode'
@@ -47,6 +49,7 @@ interface FeatureFlagContext {
   deploymentMode: DeploymentMode | null
   ingestionAvailable: boolean
   reasoningAvailable: boolean
+  chatAvailable: boolean
   studioModeEnabled: boolean
   ragPipelineEnabled: boolean
   inspectModeEnabled: boolean
@@ -101,6 +104,10 @@ const featureRegistry: Record<FeatureFlag, FeatureFlagDef> = {
     description: 'Doc workspace Ask mode (agentic reasoning over the doc)',
     isEnabled: (ctx) => ctx.ragPipelineEnabled && ctx.askModeEnabled,
   },
+  chat: {
+    description: 'Document Q&A chat via local Ollama (no heavy deps)',
+    isEnabled: (ctx) => ctx.chatAvailable,
+  },
 }
 
 export const useFeatureFlagStore = defineStore('feature-flags', () => {
@@ -110,6 +117,7 @@ export const useFeatureFlagStore = defineStore('feature-flags', () => {
   const maxFileSizeMb = ref<number>(0)
   const ingestionAvailable = ref(false)
   const reasoningAvailable = ref(false)
+  const chatAvailable = ref(true)
   // 0.6.1 — Surface master flags (#257). Defaults match production target:
   // legacy Studio off, new RAG pipeline on.
   const studioModeEnabled = ref(false)
@@ -128,6 +136,7 @@ export const useFeatureFlagStore = defineStore('feature-flags', () => {
     deploymentMode: deploymentMode.value,
     ingestionAvailable: ingestionAvailable.value,
     reasoningAvailable: reasoningAvailable.value,
+    chatAvailable: chatAvailable.value,
     studioModeEnabled: studioModeEnabled.value,
     ragPipelineEnabled: ragPipelineEnabled.value,
     inspectModeEnabled: inspectModeEnabled.value,
@@ -159,6 +168,7 @@ export const useFeatureFlagStore = defineStore('feature-flags', () => {
         maxFileSizeMb.value = data.maxFileSizeMb ?? 0
         ingestionAvailable.value = data.ingestionAvailable ?? false
         reasoningAvailable.value = data.reasoningAvailable ?? false
+        chatAvailable.value = data.chatAvailable ?? true
         // 0.6.1 — surface flags. Backward compat: missing studio → false
         // (production target), missing rag pipeline → true (legacy behaviour).
         studioModeEnabled.value = data.studioModeEnabled ?? false
@@ -203,11 +213,12 @@ export const useFeatureFlagStore = defineStore('feature-flags', () => {
    * `ingestion` registry entry below — components that drive the
    * actual push action consult that flag, not `modeFlags()`.
    */
-  function modeFlags(): { parse: boolean; chunk: boolean; ingest: boolean } {
+  function modeFlags(): { parse: boolean; chunk: boolean; ingest: boolean; ask: boolean } {
     return {
       parse: inspectModeEnabled.value,
       chunk: linkedModeEnabled.value,
       ingest: true,
+      ask: chatAvailable.value,
     }
   }
 
@@ -218,6 +229,7 @@ export const useFeatureFlagStore = defineStore('feature-flags', () => {
     maxFileSizeMb,
     ingestionAvailable,
     reasoningAvailable,
+    chatAvailable,
     studioModeEnabled,
     ragPipelineEnabled,
     inspectModeEnabled,

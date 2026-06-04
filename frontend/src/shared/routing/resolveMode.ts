@@ -14,7 +14,7 @@ import { type DocMode } from './modes'
  * Priority: `parse` first (extraction is the natural landing for a
  * freshly parsed doc), then `chunk`, then `ingest`.
  */
-export const MODE_PRIORITY: readonly DocMode[] = ['parse', 'chunk', 'ingest'] as const
+export const MODE_PRIORITY: readonly DocMode[] = ['parse', 'chunk', 'ingest', 'ask'] as const
 
 export function resolveMode(
   requested: DocMode | undefined,

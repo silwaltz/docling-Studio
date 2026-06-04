@@ -47,7 +47,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements-local.txt .
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+# PyTorch nightly with CUDA 12.8 — required for Blackwell (RTX 50xx) GPUs.
+# Stable PyTorch only supports up to CUDA 12.4; nightly adds sm_100 support.
+ARG PYTORCH_INDEX=https://download.pytorch.org/whl/nightly/cu128
+RUN pip install --no-cache-dir --pre torch torchvision --index-url ${PYTORCH_INDEX} \
     && pip install --no-cache-dir -r requirements-local.txt
 
 RUN chown -R appuser:appuser /app \

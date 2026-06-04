@@ -22,10 +22,10 @@
  * working.
  */
 
-export type DocMode = 'parse' | 'chunk' | 'ingest'
+export type DocMode = 'parse' | 'chunk' | 'ingest' | 'ask'
 
 export const DEFAULT_MODE: DocMode = 'parse'
-export const ALL_MODES: readonly DocMode[] = ['parse', 'chunk', 'ingest'] as const
+export const ALL_MODES: readonly DocMode[] = ['parse', 'chunk', 'ingest', 'ask'] as const
 
 const LEGACY_ALIASES: Readonly<Record<string, DocMode>> = {
   // Pre-#264 names.
@@ -38,7 +38,7 @@ const LEGACY_ALIASES: Readonly<Record<string, DocMode>> = {
 }
 
 export function isDocMode(value: unknown): value is DocMode {
-  return value === 'parse' || value === 'chunk' || value === 'ingest'
+  return value === 'parse' || value === 'chunk' || value === 'ingest' || value === 'ask'
 }
 
 export function parseMode(raw: unknown): DocMode {

@@ -46,6 +46,8 @@ class HealthResponse(_CamelModel):
     # available: REASONING_ENABLED=true AND deps importable. Doesn't imply
     # Ollama itself is reachable — that's checked per-call.
     reasoning_available: bool = False
+    # True when CHAT_ENABLED=true (default). No heavy deps needed.
+    chat_available: bool = False
     # 0.6.1 — Surface flags (#257). Master flags select which surface(s)
     # the frontend exposes. Defaults match the production target (RAG only).
     studio_mode_enabled: bool = False

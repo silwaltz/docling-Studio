@@ -20,6 +20,12 @@
         </button>
       </template>
     </LayersBar>
+
+    <PipelineConfigDialog
+      :open="configDialogOpen"
+      @cancel="onDialogCancel"
+      @confirm="onDialogConfirm"
+    />
     <div class="parse-body">
       <aside class="parse-structure">
         <header class="parse-structure-header">
@@ -125,6 +131,8 @@ import DocTreeRail from '../features/document/ui/DocTreeRail.vue'
 import ElementProperties from '../features/document/ui/ElementProperties.vue'
 import LayersBar from '../features/document/ui/LayersBar.vue'
 import PagePreviewWithOverlay from '../features/document/ui/PagePreviewWithOverlay.vue'
+import PipelineConfigDialog from '../features/analysis/ui/PipelineConfigDialog.vue'
+import type { PipelineOptions } from '../shared/types'
 import { useI18n } from '../shared/i18n'
 
 const props = defineProps<{ docId: string }>()
@@ -134,9 +142,20 @@ const documentStore = useDocumentStore()
 const chunksStore = useChunksStore()
 const analysisStore = useAnalysisStore()
 
-async function onLaunchAnalysis(): Promise<void> {
+const configDialogOpen = ref(false)
+
+function onLaunchAnalysis(): void {
   if (analysisStore.running) return
-  await analysisStore.run(props.docId)
+  configDialogOpen.value = true
+}
+
+function onDialogCancel(): void {
+  configDialogOpen.value = false
+}
+
+async function onDialogConfirm(options: PipelineOptions): Promise<void> {
+  configDialogOpen.value = false
+  await analysisStore.run(props.docId, options)
 }
 
 const currentPage = ref(1)

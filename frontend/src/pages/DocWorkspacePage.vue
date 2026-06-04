@@ -81,6 +81,11 @@
             :store-links="doc.storeLinks"
             @pushed="loadDoc"
           />
+          <DocAskTab
+            v-else-if="activeMode === 'ask'"
+            :key="id"
+            :doc-id="id"
+          />
         </Suspense>
       </div>
     </template>
@@ -108,6 +113,7 @@ import HistoryDrawer from '../features/document/ui/HistoryDrawer.vue'
 import DocParseTab from './DocParseTab.vue'
 import DocChunkTab from './DocChunkTab.vue'
 import DocIngestTab from './DocIngestTab.vue'
+import DocAskTab from './DocAskTab.vue'
 
 const props = defineProps<{ id: string; mode: DocMode }>()
 
@@ -174,6 +180,7 @@ const VIEWS: readonly ViewEntry[] = [
   { key: 'parse', disabled: false },
   { key: 'chunk', disabled: false },
   { key: 'ingest', disabled: false },
+  { key: 'ask', disabled: false },
 ]
 
 const crumbs = computed<Crumb[]>(() => [
