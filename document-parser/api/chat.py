@@ -58,11 +58,15 @@ async def _stream_ollama(
         "model": model,
         "messages": messages,
         "stream": True,
+        "options": {
+            "num_ctx": 32768,
+            "num_predict": 4096,
+        },
     }
 
     total_tokens = 0
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("POST", url, json=payload) as resp:
                 if resp.status_code != 200:
                     body = await resp.aread()

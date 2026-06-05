@@ -8,9 +8,25 @@
         </header>
 
         <div class="dialog-body">
-          <!-- Pipeline options -->
+          <!-- Engine selection -->
           <div class="config-section">
             <label class="config-label">{{ t('config.pipeline') }}</label>
+
+            <div class="config-toggle-row">
+              <label class="toggle-label">
+                <input type="checkbox" v-model="local.force_vlm_pipeline" class="toggle-input" />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.forceVlmPipeline') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.forceVlmPipelineHint') }}</span>?
+              </span>
+            </div>
+          </div>
+
+          <!-- Standard pipeline options -->
+          <div v-if="!local.force_vlm_pipeline" class="config-section">
+            <label class="config-label">{{ t('config.standardOptions') }}</label>
 
             <div class="config-toggle-row">
               <label class="toggle-label">
@@ -21,6 +37,19 @@
               <span class="config-hint">
                 <span class="config-tooltip">{{ t('config.ocrHint') }}</span>?
               </span>
+            </div>
+
+            <div class="config-sub-option" v-if="local.do_ocr">
+              <div class="config-toggle-row">
+                <label class="toggle-label">
+                  <input type="checkbox" v-model="local.force_full_page_ocr" class="toggle-input" />
+                  <span class="toggle-switch" />
+                  <span class="toggle-text">{{ t('config.forceFullPageOcr') }}</span>
+                </label>
+                <span class="config-hint">
+                  <span class="config-tooltip">{{ t('config.forceFullPageOcrHint') }}</span>?
+                </span>
+              </div>
             </div>
 
             <div class="config-toggle-row">
@@ -43,108 +72,19 @@
             </div>
           </div>
 
-          <!-- Enrichment options -->
-          <div class="config-section">
-            <label class="config-label">{{ t('config.enrichment') }}</label>
+          <!-- VLM pipeline options -->
+          <div v-else class="config-section">
+            <label class="config-label">{{ t('config.vlmOptions') }}</label>
 
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input type="checkbox" v-model="local.do_code_enrichment" class="toggle-input" />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.codeEnrichment') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.codeEnrichmentHint') }}</span>?
-              </span>
-            </div>
-
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input type="checkbox" v-model="local.do_formula_enrichment" class="toggle-input" />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.formulaEnrichment') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.formulaEnrichmentHint') }}</span>?
-              </span>
-            </div>
-          </div>
-
-          <!-- Picture options -->
-          <div class="config-section">
-            <label class="config-label">{{ t('config.pictures') }}</label>
-
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input
-                  type="checkbox"
-                  v-model="local.do_picture_classification"
-                  class="toggle-input"
-                />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.pictureClassification') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.pictureClassificationHint') }}</span>?
-              </span>
-            </div>
-
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input
-                  type="checkbox"
-                  v-model="local.do_picture_description"
-                  class="toggle-input"
-                />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.pictureDescription') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.pictureDescriptionHint') }}</span>?
-              </span>
-            </div>
-
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input
-                  type="checkbox"
-                  v-model="local.generate_picture_images"
-                  class="toggle-input"
-                />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.generatePictureImages') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.generatePictureImagesHint') }}</span>?
-              </span>
-            </div>
-
-            <div class="config-toggle-row">
-              <label class="toggle-label">
-                <input
-                  type="checkbox"
-                  v-model="local.generate_page_images"
-                  class="toggle-input"
-                />
-                <span class="toggle-switch" />
-                <span class="toggle-text">{{ t('config.generatePageImages') }}</span>
-              </label>
-              <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.generatePageImagesHint') }}</span>?
-              </span>
-            </div>
-
-            <div
-              class="config-sub-option"
-              v-if="local.generate_picture_images || local.generate_page_images"
-            >
-              <label class="config-label-sm">{{ t('config.imagesScale') }}</label>
-              <select class="config-select" v-model.number="local.images_scale">
-                <option :value="0.5">0.5x</option>
-                <option :value="1.0">1.0x</option>
-                <option :value="1.5">1.5x</option>
-                <option :value="2.0">2.0x</option>
+            <div class="config-sub-option">
+              <label class="config-label-sm">{{ t('config.vlmImageScale') }}</label>
+              <select class="config-select" v-model.number="local.vlm_image_scale">
+                <option :value="2">{{ t('config.vlmScaleFast') }}</option>
+                <option :value="3">{{ t('config.vlmScaleBalanced') }}</option>
+                <option :value="4">{{ t('config.vlmScaleHigh') }}</option>
+                <option :value="5">{{ t('config.vlmScaleMax') }}</option>
               </select>
+              <span class="config-input-hint">{{ t('config.vlmImageScaleHint') }}</span>
             </div>
           </div>
         </div>
@@ -173,15 +113,11 @@ const { t } = useI18n()
 
 const DEFAULT_OPTIONS: PipelineOptions = {
   do_ocr: true,
+  force_full_page_ocr: false,
   do_table_structure: true,
   table_mode: 'accurate',
-  do_code_enrichment: false,
-  do_formula_enrichment: false,
-  do_picture_classification: false,
-  do_picture_description: false,
-  generate_picture_images: false,
-  generate_page_images: false,
-  images_scale: 1.0,
+  force_vlm_pipeline: false,
+  vlm_image_scale: 4,
 }
 
 const local = reactive<PipelineOptions>({ ...DEFAULT_OPTIONS })
@@ -417,6 +353,47 @@ function onConfirm(): void {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
   pointer-events: none;
+}
+
+/* PDF Preprocessing input styles */
+.config-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  gap: 12px;
+}
+
+.config-input-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.config-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-number-input {
+  width: 70px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+
+.config-number-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.config-input-hint {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .config-tooltip::after {

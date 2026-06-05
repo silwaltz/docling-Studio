@@ -555,6 +555,7 @@ class TestAnalysisEndpointPipelineOptions:
                 "generate_picture_images": True,
                 "generate_page_images": True,
                 "images_scale": 2.0,
+                "force_vlm_pipeline": True,
             },
         }
 

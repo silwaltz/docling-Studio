@@ -26,7 +26,27 @@
       @cancel="onDialogCancel"
       @confirm="onDialogConfirm"
     />
-    <div class="parse-body">
+
+    <!-- View tabs -->
+    <div class="parse-view-tabs">
+      <button
+        class="parse-view-tab"
+        :class="{ active: activeView === 'visual' }"
+        @click="activeView = 'visual'"
+      >
+        {{ t('parse.viewVisual') }}
+      </button>
+      <button
+        class="parse-view-tab"
+        :class="{ active: activeView === 'markdown' }"
+        @click="activeView = 'markdown'"
+      >
+        {{ t('parse.viewMarkdown') }}
+      </button>
+    </div>
+
+    <!-- Visual view -->
+    <div v-if="activeView === 'visual'" class="parse-body">
       <aside class="parse-structure">
         <header class="parse-structure-header">
           <h2 class="parse-structure-title">{{ t('parse.structureTitle') }}</h2>
@@ -105,6 +125,19 @@
         @save-chunk="onSaveChunk"
       />
     </div>
+
+    <!-- Markdown view -->
+    <div v-else-if="activeView === 'markdown'" class="parse-markdown-view">
+      <div v-if="documentStore.workspaceActiveAnalysis?.contentMarkdown || analysisStore.currentAnalysis?.contentMarkdown" class="parse-markdown-content">
+        <MarkdownViewer :content="documentStore.workspaceActiveAnalysis?.contentMarkdown || analysisStore.currentAnalysis?.contentMarkdown || ''" />
+      </div>
+      <div v-else-if="documentStore.workspaceLoading || analysisStore.running" class="parse-state">
+        <span class="spinner" />
+      </div>
+      <div v-else class="parse-state parse-state--empty">
+        <p>{{ t('parse.noAnalysis') }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -132,6 +165,7 @@ import ElementProperties from '../features/document/ui/ElementProperties.vue'
 import LayersBar from '../features/document/ui/LayersBar.vue'
 import PagePreviewWithOverlay from '../features/document/ui/PagePreviewWithOverlay.vue'
 import PipelineConfigDialog from '../features/analysis/ui/PipelineConfigDialog.vue'
+import MarkdownViewer from '../features/analysis/ui/MarkdownViewer.vue'
 import type { PipelineOptions } from '../shared/types'
 import { useI18n } from '../shared/i18n'
 
@@ -143,6 +177,7 @@ const chunksStore = useChunksStore()
 const analysisStore = useAnalysisStore()
 
 const configDialogOpen = ref(false)
+const activeView = ref<'visual' | 'markdown'>('visual')
 
 function onLaunchAnalysis(): void {
   if (analysisStore.running) return
@@ -157,6 +192,17 @@ async function onDialogConfirm(options: PipelineOptions): Promise<void> {
   configDialogOpen.value = false
   await analysisStore.run(props.docId, options)
 }
+
+// Watch for analysis completion and refresh document store to get markdown content
+watch(
+  () => analysisStore.currentAnalysis?.status,
+  async (newStatus, oldStatus) => {
+    if (oldStatus === 'RUNNING' && (newStatus === 'COMPLETED' || newStatus === 'FAILED')) {
+      // Refresh workspace to get the new analysis data including markdown
+      await documentStore.reloadWorkspaceVersions(props.docId)
+    }
+  },
+)
 
 const currentPage = ref(1)
 const hiddenTypes = ref<Set<string>>(new Set())
@@ -257,6 +303,7 @@ onMounted(async () => {
     chunksStore.load(props.docId),
     loadTree(),
   ])
+  await documentStore.reloadWorkspaceVersions(props.docId)
   const first = documentStore.workspacePages[0]?.page_number
   if (first) currentPage.value = first
 })
@@ -327,6 +374,53 @@ function findPageOfRef(
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+}
+
+.parse-view-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface);
+  flex-shrink: 0;
+  padding: 0 16px;
+}
+
+.parse-view-tab {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition);
+  margin-bottom: -1px;
+}
+
+.parse-view-tab:hover {
+  color: var(--text-secondary);
+}
+
+.parse-view-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.parse-markdown-view {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+}
+
+.parse-markdown-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .parse-body {

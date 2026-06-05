@@ -30,6 +30,7 @@ services:
   neo4j:
     profiles: ["ingestion"]
     image: neo4j:5.15-community
+    stop_grace_period: 60s
     environment:
       NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}
       NEO4J_server_memory_heap_initial__size: 512m

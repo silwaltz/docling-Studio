@@ -1,2 +1,4 @@
 -r requirements.txt
 docling>=2.80.0,<3.0.0
+easyocr>=1.7.0,<2.0.0
+onnxruntime-gpu>=1.19.0,<2.0.0

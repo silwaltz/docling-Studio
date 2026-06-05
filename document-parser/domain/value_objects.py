@@ -79,7 +79,7 @@ class ChunkEditAction(StrEnum):
 @dataclass(frozen=True)
 class PageElement:
     type: str
-    bbox: list[float]
+    bbox: list[float] | None
     content: str
     level: int = 0
     # Docling `self_ref` ("#/texts/12", "#/tables/3", …). Empty for items
@@ -100,6 +100,7 @@ class PageDetail:
 @dataclass(frozen=True)
 class ConversionOptions:
     do_ocr: bool = True
+    force_full_page_ocr: bool = False
     do_table_structure: bool = True
     table_mode: str = "accurate"
     do_code_enrichment: bool = False
@@ -109,6 +110,12 @@ class ConversionOptions:
     generate_picture_images: bool = False
     generate_page_images: bool = False
     images_scale: float = 1.0
+    force_vlm_pipeline: bool = False  # Force use of VLM Pipeline instead of standard pipeline
+    preprocess_pdf_dpi: int = 0  # DPI for PDF preprocessing (0 = disabled, 300 = recommended for scanned docs)
+    # Page-image render scale fed to the VLM model. Higher = the model reads
+    # more (small) text but is slower / heavier. 0 = use server default
+    # (settings.vlm_image_scale). Only used when force_vlm_pipeline is True.
+    vlm_image_scale: float = 0.0
 
     def is_default(self) -> bool:
         """Return True if all options match their defaults."""

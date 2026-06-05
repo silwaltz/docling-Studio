@@ -391,7 +391,7 @@ class AnalysisService:
             )
 
     def _build_conversion_options(self, pipeline_options: dict | None) -> ConversionOptions:
-        """Build ConversionOptions, applying default table_mode if not specified."""
+        """Build ConversionOptions, applying defaults if not specified."""
         opts_dict = pipeline_options or {}
         if "table_mode" not in opts_dict:
             opts_dict = {**opts_dict, "table_mode": self._config.default_table_mode}
@@ -428,7 +428,12 @@ class AnalysisService:
         chunking_options: dict | None,
     ) -> None:
         """Serialize results, optionally chunk, mark job completed, update page count."""
-        pages_json = json.dumps([asdict(p) for p in result.pages])
+        def _page_to_dict(page):
+            d = asdict(page)
+            d["elements"] = [e for e in d["elements"] if e.get("bbox") is not None]
+            return d
+
+        pages_json = json.dumps([_page_to_dict(p) for p in result.pages])
 
         chunks_json = None
         if chunking_options and self._chunker and result.document_json:

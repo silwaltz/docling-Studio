@@ -43,6 +43,7 @@ export interface Document {
 
 export interface PipelineOptions {
   do_ocr?: boolean
+  force_full_page_ocr?: boolean
   do_table_structure?: boolean
   table_mode?: 'accurate' | 'fast'
   do_code_enrichment?: boolean
@@ -52,6 +53,9 @@ export interface PipelineOptions {
   generate_picture_images?: boolean
   generate_page_images?: boolean
   images_scale?: number
+  force_vlm_pipeline?: boolean
+  preprocess_pdf_dpi?: number  // DPI for PDF preprocessing (0 = disabled, 300 = recommended)
+  vlm_image_scale?: number  // VLM page render scale (0 = server default). Only used with force_vlm_pipeline.
 }
 
 export type AnalysisStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

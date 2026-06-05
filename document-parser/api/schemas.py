@@ -119,6 +119,10 @@ class PipelineOptionsRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     do_ocr: bool = Field(default=True, validation_alias=AliasChoices("do_ocr", "doOcr"))
+    force_full_page_ocr: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("force_full_page_ocr", "forceFullPageOcr"),
+    )
     do_table_structure: bool = Field(
         default=True, validation_alias=AliasChoices("do_table_structure", "doTableStructure")
     )
@@ -149,6 +153,34 @@ class PipelineOptionsRequest(BaseModel):
     images_scale: float = Field(
         default=1.0, validation_alias=AliasChoices("images_scale", "imagesScale")
     )
+    force_vlm_pipeline: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("force_vlm_pipeline", "forceVlmPipeline"),
+    )
+    preprocess_pdf_dpi: int = Field(
+        default=0,
+        validation_alias=AliasChoices("preprocess_pdf_dpi", "preprocessPdfDpi"),
+        description="DPI for PDF preprocessing (0 = disabled, 300 = recommended for scanned docs)",
+    )
+    vlm_image_scale: float = Field(
+        default=0.0,
+        validation_alias=AliasChoices("vlm_image_scale", "vlmImageScale"),
+        description="VLM page-image render scale (0 = server default). Only used with force_vlm_pipeline.",
+    )
+
+    @field_validator("preprocess_pdf_dpi")
+    @classmethod
+    def validate_preprocess_pdf_dpi(cls, v: int) -> int:
+        if v < 0 or v > 600:
+            raise ValueError("preprocess_pdf_dpi must be between 0 and 600")
+        return v
+
+    @field_validator("vlm_image_scale")
+    @classmethod
+    def validate_vlm_image_scale(cls, v: float) -> float:
+        if v < 0 or v > 10:
+            raise ValueError("vlm_image_scale must be between 0 and 10")
+        return v
 
     @field_validator("table_mode")
     @classmethod

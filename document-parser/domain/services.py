@@ -20,13 +20,61 @@ def extract_html_body(html: str) -> str:
     return match.group(1).strip() if match else html
 
 
-def merge_results(results: list[ConversionResult]) -> ConversionResult:
-    """Merge multiple batch ConversionResults into a single consolidated result.
+def _merge_document_json(results: list[ConversionResult]) -> str | None:
+    """Merge document_json across batches by concatenating texts/body children.
 
-    document_json is intentionally set to None: merging DoclingDocument's internal
-    tree structure across batches is error-prone. Re-chunking is disabled for
-    batched conversions (robustness decision for 0.3.1).
+    Each batch produces an independent DoclingDocument. We merge by appending
+    their `texts`, `tables`, `pictures`, `groups` lists and their `body.children`
+    refs, producing a single flat document that covers all pages. This is
+    sufficient for the Structure tree and reasoning tunnel — structural nesting
+    within a batch is preserved; cross-batch heading hierarchy is not, but that
+    is acceptable for a batched conversion.
     """
+    import json as _json
+
+    merged_texts: list = []
+    merged_tables: list = []
+    merged_pictures: list = []
+    merged_groups: list = []
+    merged_body_children: list = []
+    merged_pages: dict = {}
+    first_doc: dict | None = None
+
+    for r in results:
+        if not r.document_json:
+            continue
+        try:
+            doc = _json.loads(r.document_json)
+        except Exception:
+            continue
+        if first_doc is None:
+            first_doc = doc
+        merged_texts.extend(doc.get("texts") or [])
+        merged_tables.extend(doc.get("tables") or [])
+        merged_pictures.extend(doc.get("pictures") or [])
+        merged_groups.extend(doc.get("groups") or [])
+        merged_body_children.extend((doc.get("body") or {}).get("children") or [])
+        merged_pages.update(doc.get("pages") or {})
+
+    if first_doc is None:
+        return None
+
+    merged_doc = dict(first_doc)
+    merged_doc["texts"] = merged_texts
+    merged_doc["tables"] = merged_tables
+    merged_doc["pictures"] = merged_pictures
+    merged_doc["groups"] = merged_groups
+    merged_doc["pages"] = merged_pages
+    merged_doc["body"] = {
+        "self_ref": "#/body",
+        "children": merged_body_children,
+        "content_layer": "body",
+    }
+    return _json.dumps(merged_doc)
+
+
+def merge_results(results: list[ConversionResult]) -> ConversionResult:
+    """Merge multiple batch ConversionResults into a single consolidated result."""
     if not results:
         return ConversionResult(page_count=0, content_markdown="", content_html="", pages=[])
 
@@ -52,7 +100,7 @@ def merge_results(results: list[ConversionResult]) -> ConversionResult:
         content_html=merged_html,
         pages=all_pages,
         skipped_items=total_skipped,
-        document_json=None,
+        document_json=_merge_document_json(results),
     )
 
 

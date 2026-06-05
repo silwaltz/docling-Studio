@@ -142,12 +142,29 @@ const messages: Messages = {
     'config.ocr': 'OCR',
     'config.ocrHint':
       'Applique la reconnaissance optique de caractères sur les pages scannées ou les images intégrées. Indispensable pour les PDF non-natifs.',
+    'config.forceFullPageOcr': 'OCR pleine page (documents scannés)',
+    'config.forceFullPageOcrHint':
+      'Ignore le texte natif du PDF et applique l’OCR sur chaque page entière. À activer pour les documents entièrement scannés (bons de livraison, factures scannées).',
     'config.tableStructure': 'Extraction des tableaux',
     'config.tableStructureHint':
       'Détecte les tableaux dans le document et reconstruit leur structure lignes/colonnes via le modèle TableFormer, avec correspondance des cellules.',
     'config.tableMode': 'Mode tableaux',
     'config.tableModeAccurate': 'Précis',
     'config.tableModeFast': 'Rapide',
+    'config.forceVlmPipeline': 'Pipeline VLM',
+    'config.forceVlmPipelineHint':
+      'Force l\'utilisation du Pipeline VLM de Docling au lieu du pipeline standard. Utilise un modèle Vision-Language pour la conversion complète du document.',
+    'config.standardOptions': 'Options du pipeline standard',
+    'config.vlmOptions': 'Options du pipeline VLM',
+    'config.vlmImageScale': 'Résolution',
+    'config.vlmImageScaleHint':
+      'Échelle de rendu de la page transmise au modèle VLM. Une résolution plus élevée permet de lire davantage de petit texte, mais ralentit le traitement.',
+    'config.vlmScaleFast': 'Rapide (2x)',
+    'config.vlmScaleBalanced': 'Équilibré (3x)',
+    'config.vlmScaleHigh': 'Élevé (4x, recommandé)',
+    'config.vlmScaleMax': 'Maximum (5x)',
+    'config.preprocessPdfDpi': 'Prétraitement PDF (DPI)',
+    'config.preprocessPdfDpiHint': 'DPI pour le prétraitement (0 = désactivé, 300 = recommandé pour les documents scannés)',
     'config.enrichment': 'Enrichissement',
     'config.codeEnrichment': 'Code',
     'config.codeEnrichmentHint':
@@ -448,6 +465,8 @@ const messages: Messages = {
     'parse.noAnalysis': "Aucune analyse \u2014 lancez d'abord un parse.",
     'parse.expandAll': 'Tout d\u00e9plier',
     'parse.collapseAll': 'Tout replier',
+    'parse.viewVisual': 'Visuel',
+    'parse.viewMarkdown': 'Markdown',
 
     // Chunk view (#264) \u2014 chunks aligned to the page preview
     'chunk.strategy': 'Strat\u00e9gie',
@@ -793,12 +812,29 @@ const messages: Messages = {
     'config.ocr': 'OCR',
     'config.ocrHint':
       'Applies Optical Character Recognition on scanned pages or embedded images. Essential for non-native PDFs.',
+    'config.forceFullPageOcr': 'Force full-page OCR (scanned documents)',
+    'config.forceFullPageOcrHint':
+      'Ignores the native PDF text layer and OCRs every page as an image. Enable for fully scanned documents (shipping docs, scanned invoices) where text appears as <!-- image -->.',
     'config.tableStructure': 'Table extraction',
     'config.tableStructureHint':
       'Detects tables in the document and reconstructs their row/column structure using the TableFormer model, with cell matching.',
     'config.tableMode': 'Table mode',
     'config.tableModeAccurate': 'Accurate',
     'config.tableModeFast': 'Fast',
+    'config.forceVlmPipeline': 'VLM Pipeline',
+    'config.forceVlmPipelineHint':
+      'Force use of Docling\'s VLM Pipeline instead of the standard pipeline. Uses a Vision-Language model for full document conversion.',
+    'config.standardOptions': 'Standard pipeline options',
+    'config.vlmOptions': 'VLM pipeline options',
+    'config.vlmImageScale': 'Resolution',
+    'config.vlmImageScaleHint':
+      'Page render scale fed to the VLM model. Higher resolution lets it read more small text but is slower.',
+    'config.vlmScaleFast': 'Fast (2x)',
+    'config.vlmScaleBalanced': 'Balanced (3x)',
+    'config.vlmScaleHigh': 'High (4x, recommended)',
+    'config.vlmScaleMax': 'Maximum (5x)',
+    'config.preprocessPdfDpi': 'PDF Preprocessing (DPI)',
+    'config.preprocessPdfDpiHint': 'DPI for preprocessing (0 = disabled, 300 = recommended for scanned docs)',
     'config.enrichment': 'Enrichment',
     'config.codeEnrichment': 'Code',
     'config.codeEnrichmentHint':
@@ -1087,6 +1123,8 @@ const messages: Messages = {
     'parse.noAnalysis': 'No analysis yet — run a parse first.',
     'parse.expandAll': 'Expand all',
     'parse.collapseAll': 'Collapse all',
+    'parse.viewVisual': 'Visual',
+    'parse.viewMarkdown': 'Markdown',
 
     // Chunk view (#264) — chunks aligned to the page preview
     'chunk.strategy': 'Strategy',

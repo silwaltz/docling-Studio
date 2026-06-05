@@ -66,6 +66,14 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
     )
+    # VLM fallback model for OCR fallback when standard pipeline fails
+    # Uses Docling's VlmPipeline with the specified model spec
+    vlm_fallback_model: str = "GRANITEDOCLING_TRANSFORMERS"  # Default: Granite-Docling-258M
+    # Page-image render scale fed to the VLM model. The granite-docling default
+    # (2.0) is too low for dense full-page documents — the 258M model can only
+    # read large header text and misses the body. 4.0 lets it read nearly all
+    # text. Higher = more complete but slower / more memory. Tune per hardware.
+    vlm_image_scale: float = 4.0
     # 0.6.1 — Surface flags (#257). Two master flags select which UI surface
     # is exposed: STUDIO_MODE_ENABLED (legacy OCR-debug) and
     # RAG_PIPELINE_ENABLED (new doc-centric ingestion + visualization).
@@ -115,6 +123,8 @@ class Settings:
             errors.append(f"embedding_dimension must be >= 1 (got {self.embedding_dimension})")
         if not (self.studio_mode_enabled or self.rag_pipeline_enabled):
             errors.append("at least one of STUDIO_MODE_ENABLED / RAG_PIPELINE_ENABLED must be true")
+        if self.vlm_image_scale <= 0:
+            errors.append(f"vlm_image_scale must be > 0 (got {self.vlm_image_scale})")
         if self.default_table_mode not in ("accurate", "fast"):
             errors.append(
                 f"default_table_mode must be 'accurate' or 'fast' (got '{self.default_table_mode}')"
@@ -182,6 +192,8 @@ class Settings:
             max_paste_image_size_mb=int(os.environ.get("MAX_PASTE_IMAGE_SIZE_MB", "10")),
             paste_allowed_image_types=[t.strip() for t in paste_types_raw.split(",") if t.strip()],
             cors_origins=[o.strip() for o in cors_raw.split(",")],
+            vlm_fallback_model=os.environ.get("VLM_FALLBACK_MODEL", "GRANITEDOCLING_TRANSFORMERS"),
+            vlm_image_scale=float(os.environ.get("VLM_IMAGE_SCALE", "4.0")),
             # 0.6.1 — Surface flags (#257).
             studio_mode_enabled=os.environ.get("STUDIO_MODE_ENABLED", "false").lower()
             in ("1", "true", "yes", "on"),
