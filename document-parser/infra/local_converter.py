@@ -634,6 +634,169 @@ def _build_ocr_document_json(pages: list[PageDetail]) -> str:
     return json.dumps(doc)
 
 
+def _result_from_flat_texts(doc, page_count: int) -> ConversionResult | None:
+    """Build a ConversionResult from the flat ``doc.texts`` / ``doc.tables`` lists.
+
+    Some documents (e.g. colored shipping forms / Air Waybills) make the layout
+    model classify the *entire page* as a single ``picture``. The OCR'd text
+    cells then live in ``doc.texts`` but are orphaned from the body tree, so
+    ``export_to_markdown()`` and ``iterate_items()`` only yield
+    ``<!-- image -->``. This reads the flat lists directly — preserving each
+    item's page/bbox via ``prov`` — so the markdown, Structure panel, and Visual
+    overlay all populate. Returns ``None`` if no usable text is found.
+    """
+    pages: dict[int, PageDetail] = {}
+    for page_key, page_obj in doc.pages.items():
+        page_no = int(page_key) if isinstance(page_key, str) else page_key
+        pages[page_no] = PageDetail(
+            page_number=page_no,
+            width=page_obj.size.width,
+            height=page_obj.size.height,
+        )
+
+    md_parts: list[str] = []
+    texts_json: list[dict] = []
+    body_children: list[dict] = []
+
+    def _emit(item, content: str, label: str) -> None:
+        content = (content or "").strip()
+        if not content:
+            return
+        page_no = next(iter(pages), 1)
+        bbox = [0.0, 0.0, 0.0, 0.0]
+        prov_list = getattr(item, "prov", None) or []
+        if prov_list:
+            prov = prov_list[0]
+            page_no = getattr(prov, "page_no", page_no)
+            if page_no not in pages:
+                pages[page_no] = PageDetail(
+                    page_number=page_no, width=DEFAULT_PAGE_WIDTH, height=DEFAULT_PAGE_HEIGHT
+                )
+            if getattr(prov, "bbox", None):
+                bbox = to_topleft_list(prov.bbox, pages[page_no].height)
+        if page_no not in pages:
+            pages[page_no] = PageDetail(
+                page_number=page_no, width=DEFAULT_PAGE_WIDTH, height=DEFAULT_PAGE_HEIGHT
+            )
+        ref = getattr(item, "self_ref", "") or f"#/texts/{len(texts_json)}"
+        pages[page_no].elements.append(
+            PageElement(type=label, bbox=bbox, content=content, level=0, self_ref=ref)
+        )
+        texts_json.append(
+            {
+                "self_ref": ref,
+                "label": "paragraph",
+                "text": content,
+                "prov": [
+                    {
+                        "page_no": page_no,
+                        "bbox": {
+                            "l": bbox[0],
+                            "t": bbox[1],
+                            "r": bbox[2],
+                            "b": bbox[3],
+                            "coord_origin": "TOPLEFT",
+                        },
+                    }
+                ],
+            }
+        )
+        body_children.append({"$ref": ref})
+        md_parts.append(content)
+
+    for t in getattr(doc, "texts", []) or []:
+        _emit(t, getattr(t, "text", ""), "text")
+
+    for tbl in getattr(doc, "tables", []) or []:
+        try:
+            tbl_md = tbl.export_to_markdown(doc)
+        except (AttributeError, ValueError, TypeError):
+            tbl_md = ""
+        _emit(tbl, tbl_md, "table")
+
+    if not md_parts:
+        return None
+
+    content_markdown = "\n\n".join(md_parts)
+    sorted_pages = sorted(pages.values(), key=lambda p: p.page_number)
+    doc_json = {
+        "schema_name": "DoclingDocument",
+        "version": "1.0.0",
+        "name": "flat_text_recovery",
+        "body": {"self_ref": "#/body", "children": body_children, "content_layer": "body"},
+        "texts": texts_json,
+        "pictures": [],
+        "tables": [],
+        "key_value_items": [],
+        "form_items": [],
+        "pages": {
+            str(p.page_number): {
+                "size": {"width": p.width, "height": p.height},
+                "page_no": p.page_number,
+            }
+            for p in sorted_pages
+        },
+        "groups": [],
+    }
+    return ConversionResult(
+        page_count=page_count or len(sorted_pages) or 1,
+        content_markdown=content_markdown,
+        content_html="",
+        pages=sorted_pages,
+        skipped_items=0,
+        document_json=json.dumps(doc_json),
+    )
+
+
+def _standard_ocr_fallback_result(
+    file_path: str, page_range: tuple[int, int] | None
+) -> ConversionResult | None:
+    """Run the standard pipeline with full-page OCR, recovering orphaned text.
+
+    Used when the VLM pipeline returns a degenerate result (the whole page
+    classified as one picture, no text). The standard EasyOCR path reads the
+    text reliably; ``_result_from_flat_texts`` then rebuilds the document from
+    the flat text list. Returns ``None`` if OCR also yields nothing.
+    """
+    try:
+        conv = _build_docling_converter(ConversionOptions(force_full_page_ocr=True))
+        kwargs: dict = {}
+        if settings.max_page_count > 0:
+            kwargs["max_num_pages"] = settings.max_page_count
+        if settings.max_file_size > 0:
+            kwargs["max_file_size"] = settings.max_file_size
+        if page_range is not None:
+            kwargs["page_range"] = page_range
+
+        acquired = _converter_lock.acquire(timeout=settings.lock_timeout)
+        if not acquired:
+            logger.warning("Standard OCR fallback: could not acquire converter lock")
+            return None
+        try:
+            result = conv.convert(file_path, **kwargs)
+        finally:
+            _converter_lock.release()
+
+        doc = result.document
+        page_count = len(doc.pages)
+        # Prefer the normal extraction when it actually produced text.
+        normal_md = doc.export_to_markdown()
+        if not _is_text_empty(normal_md, page_count):
+            pages_detail, skipped = _extract_pages_detail(result)
+            return ConversionResult(
+                page_count=page_count or len(pages_detail) or 1,
+                content_markdown=normal_md,
+                content_html=doc.export_to_html(),
+                pages=pages_detail,
+                skipped_items=skipped,
+                document_json=json.dumps(doc.export_to_dict()),
+            )
+        return _result_from_flat_texts(doc, page_count)
+    except Exception as exc:
+        logger.warning("Standard OCR fallback failed: %s", exc)
+        return None
+
+
 _MIN_CHARS_PER_PAGE = 500  # below this density we consider extraction poor
 
 
@@ -733,6 +896,23 @@ def _convert_sync(
             md_preview,
         )
 
+        # Degenerate VLM output: the granite-docling model sometimes classifies
+        # the whole page as a single <picture> (common for colored forms / Air
+        # Waybills), yielding no text at all. Fall back to the standard pipeline
+        # with full-page OCR, which reads the text reliably.
+        if not content_markdown.strip():
+            logger.warning(
+                "VLM Pipeline produced no text (page likely classified as one "
+                "picture) — falling back to standard pipeline + full-page OCR"
+            )
+            fallback = _standard_ocr_fallback_result(file_path, page_range)
+            if fallback is not None and fallback.content_markdown.strip():
+                logger.info(
+                    "VLM→standard OCR fallback recovered %d chars", len(fallback.content_markdown)
+                )
+                return fallback
+            logger.warning("VLM→standard OCR fallback yielded no text either")
+
         # Fall back to the synthetic single-paragraph structure only if the
         # standard extraction found no bbox'd elements (degenerate output).
         if not any(p.elements for p in pages_detail):
@@ -775,6 +955,21 @@ def _convert_sync(
         len(content_markdown) if content_markdown else 0,
         md_preview[:200]
     )
+
+    # Recover orphaned text: if the layout model classified the whole page as a
+    # single picture, the OCR'd cells live in doc.texts but are dropped from the
+    # markdown body (export yields only "<!-- image -->"). Rebuild from the flat
+    # text list so the content isn't lost (common for colored shipping forms).
+    if _is_text_empty(content_markdown, page_count) and getattr(doc, "texts", None):
+        recovered = _result_from_flat_texts(doc, page_count)
+        if recovered is not None and recovered.content_markdown.strip():
+            logger.warning(
+                "Standard pipeline: markdown degenerate (full-page picture) — "
+                "recovered %d chars from %d orphaned text items",
+                len(recovered.content_markdown),
+                len(doc.texts),
+            )
+            return recovered
 
     # If force_full_page_ocr is set and Docling produced no text (pure image PDF),
     # fall back to direct EasyOCR on the rendered page images.
