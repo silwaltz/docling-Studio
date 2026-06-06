@@ -1,159 +1,285 @@
+# Docling Studio - Team Customization
 
-# Docling Studio
-
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![Python](https://img.shields.io/badge/python-3.12+-blue)
-![Node](https://img.shields.io/badge/node-20+-green)
-![Docling](https://img.shields.io/badge/powered%20by-Docling-orange)
-![CI](https://github.com/scub-france/Docling-Studio/actions/workflows/ci.yml/badge.svg)
-[![GitHub Stars](https://img.shields.io/github/stars/scub-france/Docling-Studio?style=flat-square&logo=github&label=Stars)](https://github.com/scub-france/Docling-Studio)
-
-A visual document analysis studio powered by [Docling](https://github.com/DS4SD/docling).
-Upload a PDF, configure the extraction pipeline, and visualize the results — text, tables, images, formulas, bounding boxes — all from your browser.
-
-![Docling Studio — Presentation](docs/screenshots/presentation.gif)
-
-
-## Star History
-
-<a href="https://www.star-history.com/?repos=scub-france%2FDocling-Studio&type=timeline&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=scub-france/Docling-Studio&type=timeline&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=scub-france/Docling-Studio&type=timeline&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=scub-france/Docling-Studio&type=timeline&legend=top-left" />
- </picture>
-</a>
-
-## Features
-
-- **Home page** with quick upload and recent documents
-- **PDF viewer** with page navigation, bounding box overlay, and resizable results panel
-- **Configurable Docling pipeline** — OCR, table extraction, code/formula enrichment, picture classification & description, image generation
-- **Bounding box visualization** — color-coded element overlay directly on the PDF
-- **Per-page results** — right panel syncs with the current PDF page
-- **Chunking** — split extracted content into semantic chunks (hierarchical, hybrid, or page-based) with configurable token limits and inline editing
-- **Ingestion pipeline** — Docling → chunking → embedding → OpenSearch vector indexing (one-click from Studio)
-- **Graph storage (Neo4j)** — full DoclingDocument tree (sections, paragraphs, tables, pages, chunks) mirrored as a graph with `PARENT_OF`, `NEXT`, `ON_PAGE`, `HAS_CHUNK`, `DERIVED_FROM` relations, with an in-app graph view powered by Cytoscape.js
-- **Markdown & HTML export** of extracted content
-- **Document management** — upload, list, delete, search, filter by indexing status
-- **Analysis history** — re-visit and open past analyses
-- **Upload limits** — configurable max file size and max page count per document
-- **Rate limiting** — configurable requests per minute per IP
-- **Dark / Light theme** and **FR / EN** localization
-
-
+A customized document analysis studio for our team, powered by [Docling](https://github.com/DS4SD/docling). Upload PDFs, configure extraction pipelines, visualize results, and perform semantic search — all from your browser.
 
 ## Architecture
 
-```
-┌────────────┐         ┌──────────────────────┐
-│  Frontend  │────────▶│   Document Parser    │
-│  Vue 3     │  /api/* │ FastAPI + Docling    │
-│  port 3000 │         │ SQLite + file storage│
-└────────────┘         │   port 8000          │
-                       └──────────────────────┘
-```
-
-| Service | Stack | Role |
-|---------|-------|------|
-| **frontend** | Vue 3, TypeScript, Vite, Pinia | UI, PDF viewer, results display |
-| **document-parser** | FastAPI, Docling, SQLite, pdf2image | REST API, document parsing, storage |
-
-### Backend structure (hexagonal architecture — ports & adapters)
-
-```
-document-parser/
-├── main.py                   # FastAPI app, CORS, lifespan
-├── domain/                   # Pure domain — no HTTP, no DB
-│   ├── models.py             # Document, AnalysisJob dataclasses
-│   ├── ports.py              # Abstract protocols (converter, chunker)
-│   └── value_objects.py      # ConversionResult, PageDetail, ChunkResult
-├── api/                      # HTTP layer (FastAPI routers)
-│   ├── schemas.py            # Pydantic DTOs (camelCase serialization)
-│   ├── documents.py          # /api/documents endpoints
-│   └── analyses.py           # /api/analyses endpoints
-├── persistence/              # Data layer (SQLite via aiosqlite)
-│   ├── database.py           # Connection management, schema init
-│   ├── document_repo.py      # Document CRUD
-│   └── analysis_repo.py      # AnalysisJob CRUD
-├── services/                 # Use case orchestration
-│   ├── document_service.py   # Upload, delete, preview
-│   └── analysis_service.py   # Async Docling processing
-└── tests/                    # 377 tests (pytest)
-```
-
-### Frontend structure (feature-based)
-
-```
-frontend/src/
-├── app/                      # App shell, router, global styles
-├── pages/                    # Route-level pages
-│   ├── HomePage.vue          # Landing page with upload & stats
-│   ├── StudioPage.vue        # PDF viewer + config + results
-│   ├── DocumentsPage.vue     # Document management
-│   ├── HistoryPage.vue       # Past analyses
-│   └── SettingsPage.vue      # Theme, language, API URL
-├── features/                 # Feature modules
-│   ├── analysis/             # Analysis store, API, bbox, UI components
-│   ├── document/             # Document store, API, upload, list
-│   ├── history/              # History store, API, navigation
-│   └── settings/             # Settings store
-└── shared/                   # Shared utilities (types, i18n, http, format)
+```mermaid
+---
+config:
+  theme: neo
+  layout: elk
+---
+flowchart LR
+ subgraph Frontend["Frontend (docker) — Vue 3 / Nginx :3000"]
+        UI["Pages: Upload · Parse · Chunks · Ask · Search · Ingest"]
+  end
+ subgraph Backend["Backend (docker) — FastAPI (document-parser) :8000"]
+        API["REST API"]
+        Docling["Docling (local)\nor Docling Serve (remote)"]
+        Models["Models:\n• Layout Analysis Model\n• EasyOCR (OCR)\n• TableFormer (tables)\n• Figure Classifier Model\n• Reading Order Model\n• Granite-Docling-258M VLM"]
+  end
+ subgraph Storage["Storage (docker)"]
+        SQLite[("SQLite\n(docs · analyses · stores)")]
+        FileStore[("File Store\n(uploads)")]
+  end
+ subgraph Ingestion["Ingestion Pipeline (docker)"]
+        Embed["Embedding Service\nall-MiniLM-L6-v2 / Granite 30M"]
+        OS[("OpenSearch 2\n(vector + keyword index)")]
+        Neo4j[("Neo4j 5\n(graph structure)")]
+  end
+ subgraph Chat["Ask (host)"]
+        Ollama["Ollama\ngemma4:e4b"]
+  end
+    User(["👤 User (Browser)"]) -- HTTP --> Frontend
+    Frontend -- REST/JSON --> API
+    API --> Docling & SQLite & FileStore
+    Docling --> Models
+    Models --> Docling
+    Docling -- parsed doc --> API
+    API -- embed chunks --> Embed
+    Embed --> OS
+    API -- graph nodes --> Neo4j
+    API -- semantic search --> OS
+    API -- LLM Q&A --> Ollama
+    Ollama -- streamed answer --> API
+    API -- response --> Frontend
+    Frontend -- rendered result --> User
 ```
 
-## Quick Start
+## Prerequisites
 
-One command, nothing else to install:
+Before setting up the application, ensure you have the following installed:
+
+- **Docker Desktop** (latest version recommended)
+  - At least 8 GB RAM allocated to Docker
+  - At least 4 CPUs allocated to Docker
+- **Git** (for cloning the repository)
+- **Ollama** (optional, for Ask functionality)
+  - Install from [ollama.com](https://ollama.com/)
+  - Pull and run the model: `ollama run gemma4:e4b`
+
+## Setup
+
+### 1. Clone the Repository
 
 ```bash
-docker run -p 3000:3000 ghcr.io/scub-france/docling-studio:latest-local
+git clone https://github.com/silwaltz/docling-Studio.git
+cd docling-Studio
 ```
 
-Open [http://localhost:3000](http://localhost:3000), upload a PDF, and get results. That's it.
+### 2. Configure Environment Variables
 
-> **Note:** The first analysis takes longer as Docling downloads its ML models (~400 MB). Subsequent runs are fast.
-
-### Image variants
-
-| Variant | Image tag | Size | Description |
-|---------|-----------|------|-------------|
-| **local** | `latest-local` | ~1.9 GB | Full — runs Docling in-process, CPU-only |
-| **remote** | `latest-remote` | ~270 MB | Lightweight — delegates to an external [Docling Serve](https://github.com/DS4SD/docling-serve) instance |
-
-For remote mode:
+Copy the example environment file and customize as needed:
 
 ```bash
-docker run -p 3000:3000 \
-  -e DOCLING_SERVE_URL=http://your-docling-serve:5001 \
-  ghcr.io/scub-france/docling-studio:latest-remote
+cp .env.example .env
 ```
 
-### Docker Compose
+Key environment variables to review:
+- `MAX_FILE_SIZE_MB` - Maximum upload file size (default: 50)
+- `MAX_PAGE_COUNT` - Maximum pages per document (default: 0 = unlimited)
+- `RATE_LIMIT_RPM` - Rate limit per IP (default: 100)
+- `NEO4J_PASSWORD` - Neo4j password (default: changeme - **change this for production**)
+
+### 3. Start the Application
+
+For full development stack with all services:
 
 ```bash
-git clone https://github.com/scub-france/Docling-Studio.git
-cd Docling-Studio
-
-# Simple mode (backend + frontend only)
-docker compose up --build
-
-# With ingestion pipeline (OpenSearch + embeddings)
-docker compose --profile ingestion -f docker-compose.yml -f docker-compose.ingestion.yml up --build
+docker compose -f docker-compose.dev.yml up -d
 ```
 
-### Local Development
+This starts:
+- Frontend (Vue 3 dev server) on http://localhost:3000
+- Backend (FastAPI) on http://localhost:8000
+- Neo4j on http://localhost:7474
+- OpenSearch on http://localhost:9200
+- OpenSearch Dashboards on http://localhost:5601
+- Embedding service on http://localhost:8001
+
+### 4. Access the Application
+
+Open your browser and navigate to: http://localhost:3000
+
+### 5. Stop the Application
+
+```bash
+docker compose -f docker-compose.dev.yml down
+```
+
+To also remove volumes (clean slate):
+
+```bash
+docker compose -f docker-compose.dev.yml down -v
+```
+
+## Parsing Options and Expected Results
+
+### Pipeline Options
+
+Configure parsing options in the Studio UI. These control how Docling processes your documents:
+
+**Pipeline Selection:**
+
+| Option | Default | Description | Expected Result |
+|--------|---------|-------------|-----------------|
+| **VLM Pipeline** | `false` | Use VLM (Vision Language Model) pipeline instead of standard pipeline | Higher quality extraction for complex documents, slower processing |
+
+**When VLM Pipeline is enabled:**
+
+| Option | Default | Description | Expected Result |
+|--------|---------|-------------|-----------------|
+| **Resolution** | `4` (High) | Page render scale fed to VLM model: Fast (2x), Balanced (3x), High (4x), Max (5x) | Higher resolution reads smaller text but is slower |
+
+**When VLM Pipeline is disabled (Standard Pipeline):**
+
+| Option | Default | Description | Expected Result |
+|--------|---------|-------------|-----------------|
+| **OCR** | `true` | OCR for scanned pages and embedded images | Extracts text from images and scanned PDFs |
+| **Force full-page OCR** | `false` | Force full-page OCR for scanned documents | Better text extraction from image-only PDFs |
+| **Table extraction** | `true` | Table detection and row/column reconstruction | Tables extracted with proper cell structure |
+| **Table mode** | `accurate` | `accurate` (TableFormer) or `fast` | Accurate: better table detection, slower; Fast: quicker, less accurate |
+
+### Expected Output
+
+After parsing, you'll receive:
+
+1. **Markdown Content** - Full document text in Markdown format
+2. **Structured JSON** - Complete document structure with:
+   - Text elements with bounding boxes
+   - Tables with cell contents
+   - Images with metadata
+   - Formulas in LaTeX
+   - Page layout information
+3. **Bounding Boxes** - Visual overlay on PDF showing element locations
+
+### Performance Expectations
+
+| Document type | Pages | Approx. time (CPU) |
+|---------------|-------|---------------------|
+| Simple report | 5–10  | ~30s–1 min |
+| Research paper | 10–30 | ~1–2 min |
+| Large document | 100+  | ~2–5 min |
+
+> **Note:** First run is slower as ML models download (~400 MB). Subsequent runs are faster.
+
+## Ask (Document Q&A)
+
+The Ask feature allows you to ask questions about your uploaded documents using AI.
+
+### Setup
+
+1. **Install Ollama** (if not already installed):
+   ```bash
+   # On macOS/Linux
+   curl -fsSL https://ollama.com/install.sh | sh
+
+   # On Windows: Download from https://ollama.com/download
+   ```
+
+2. **Pull the required model**:
+   ```bash
+   ollama pull gemma4:e4b
+   ```
+
+3. **Verify Ollama is running**:
+   ```bash
+   ollama serve
+   # In another terminal:
+   ollama list
+   ```
+
+4. **Configure the backend**:
+   The backend is pre-configured to use:
+   - `OLLAMA_HOST=http://host.docker.internal:11434`
+   - `CHAT_MODEL_ID=gemma4:e4b`
+
+### Using Ask
+
+1. Upload and parse a document
+2. Navigate to the **Ask** tab
+3. Type your question about the document
+4. Receive AI-generated answers, if it return json format, will include a json download button
+
+### How It Works
+
+- The system uses the full document markdown as context
+- Your question is sent to the LLM (Ollama) along with the document content
+- The LLM generates an answer based on the provided context
+- Answers are streamed back in real-time
+
+### Troubleshooting Ask
+
+If Ask doesn't work:
+
+1. **Check Ollama is running**:
+   ```bash
+   ollama ps
+   ```
+
+2. **Verify the model is pulled**:
+   ```bash
+   ollama list
+   ```
+
+3. **Check backend logs**:
+   ```bash
+   docker compose -f docker-compose.dev.yml logs document-parser
+   ```
+
+4. **Test Ollama directly**:
+   ```bash
+   ollama run gemma4:e4b "Hello, can you hear me?"
+   ```
+
+## Additional Features
+
+### Chunking
+
+Split extracted content into semantic chunks:
+- **Hierarchical** - Follows document structure (sections, paragraphs)
+- **Hybrid** - Combines structure with token limits
+- **Page-based** - Splits by page boundaries
+
+Configure chunk size and overlap in the UI.
+
+### Ingestion
+
+Index chunks into OpenSearch for:
+- Semantic search (vector-based)
+- Keyword search (full-text)
+- Hybrid search (combined)
+
+Click **Ingest** in the Studio after parsing to index.
+
+### Graph Storage
+
+Document structure stored in Neo4j enables:
+- Navigate document outline
+- Find all tables under a section
+- Trace chunks back to source elements
+- Complex structural queries
+
+Access Neo4j Browser at http://localhost:7474 (user: `neo4j`, password: from `.env`)
+
+### Search
+
+Full-text and vector search across indexed documents:
+- Search by content
+- Filter by document type
+- Re-rank results by relevance
+
+## Development
+
+### Local Development (without Docker)
 
 **Backend** (Python 3.12+):
 ```bash
 cd document-parser
-python -m venv .venv && source .venv/bin/activate
-
-# Remote mode (lightweight)
-pip install -r requirements.txt
-
-# Local mode (with Docling)
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements-local.txt
-
 uvicorn main:app --reload --port 8000
 ```
 
@@ -167,229 +293,57 @@ npm run dev
 ### Running Tests
 
 ```bash
-# Backend (377 tests)
+# Backend
 cd document-parser
 pip install pytest pytest-asyncio httpx
 pytest tests/ -v
 
-# Frontend (156 tests)
+# Frontend
 cd frontend
 npm run test:run
 ```
 
-## Pipeline Options
+## Configuration Reference
 
-These options map directly to Docling's [`PdfPipelineOptions`](https://docling-project.github.io/docling/usage/). See the [Docling documentation](https://docling-project.github.io/docling/) for details on each feature.
+See [`.env.example`](.env.example) for all available configuration options.
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `do_ocr` | `true` | OCR for scanned pages and embedded images |
-| `do_table_structure` | `true` | Table detection and row/column reconstruction |
-| `table_mode` | `accurate` | `accurate` (TableFormer) or `fast` |
-| `do_code_enrichment` | `false` | Specialized OCR for code blocks |
-| `do_formula_enrichment` | `false` | Math formula recognition (LaTeX output) |
-| `do_picture_classification` | `false` | Classify images by type (chart, photo, diagram…) |
-| `do_picture_description` | `false` | Generate image descriptions via VLM |
-| `generate_picture_images` | `false` | Extract detected images as separate files |
-| `generate_page_images` | `false` | Rasterize each page as an image |
-| `images_scale` | `1.0` | Scale factor for generated images (0.1–10) |
+Key settings:
+- `CONVERSION_MODE` - `local` (in-process Docling) or `remote` (Docling Serve)
+- `MAX_FILE_SIZE_MB` - Upload size limit
+- `MAX_PAGE_COUNT` - Page count limit
+- `RATE_LIMIT_RPM` - Rate limiting
+- `CORS_ORIGINS` - Allowed frontend origins
+- `NEO4J_PASSWORD` - Database password
+- `OLLAMA_HOST` - Ollama endpoint for Ask feature
 
-## Configuration
+## Troubleshooting
 
-All configuration is done via environment variables. See [`.env.example`](.env.example).
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CONVERSION_ENGINE` | `local` | `local` (in-process Docling) or `remote` (Docling Serve) |
-| `DOCLING_SERVE_URL` | `http://localhost:5001` | Docling Serve endpoint (remote mode only) |
-| `DOCLING_SERVE_API_KEY` | — | API key for Docling Serve (optional) |
-| `CORS_ORIGINS` | `http://localhost:3000,...` | CORS allowed origins (comma-separated) |
-| `UPLOAD_DIR` | `./uploads` | File storage directory |
-| `DB_PATH` | `./data/docling_studio.db` | SQLite database path |
-| `CONVERSION_TIMEOUT` | `600` | Max seconds for a single Docling conversion |
-| `BATCH_PAGE_SIZE` | `10` | Pages per batch (`0` = process all at once) |
-| `MAX_FILE_SIZE_MB` | `50` | Maximum upload file size in MB (`0` = unlimited) |
-| `MAX_PAGE_COUNT` | `0` | Maximum number of pages per document (`0` = unlimited) |
-| `NGINX_MAX_BODY_SIZE` | `200M` | Nginx request body limit — nginx format (`200M`, `0` = unlimited). Must be ≥ `MAX_FILE_SIZE_MB`. |
-| `RATE_LIMIT_RPM` | `100` | Max requests per minute per IP (`0` = disabled) |
-
-## Upload Limits
-
-Docling Studio enforces configurable limits on uploaded documents to protect the server against oversized files and long-running analyses:
-
-- **`MAX_FILE_SIZE_MB`** (default `50`) — rejects uploads exceeding this size. Validated at two levels: early `Content-Length` check and streaming byte count.
-- **`MAX_PAGE_COUNT`** (default `0` = unlimited) — rejects documents with more pages than allowed. Useful on shared instances or Hugging Face Spaces to cap processing time.
-- **`NGINX_MAX_BODY_SIZE`** (default `200M`) — nginx-level body cap, applied before the request reaches the backend. Defaults to `200M` so `MAX_FILE_SIZE_MB` is always the effective limit. Use nginx format (`50M`, `1G`, `0` for unlimited).
-
-Both application limits are exposed in the `/api/health` endpoint so the frontend can display them to the user before upload. Set either to `0` to disable the corresponding check.
-
-## Ingestion Pipeline (opt-in)
-
-Docling Studio can optionally index extracted chunks into [OpenSearch](https://opensearch.org/) for vector and full-text search. This requires two additional services (OpenSearch + embedding) and is **disabled by default**.
-
-To enable ingestion with Docker Compose:
+### Containers won't start
 
 ```bash
-docker compose --profile ingestion \
-  -f docker-compose.yml -f docker-compose.ingestion.yml \
-  up --build
+# Check logs
+docker compose -f docker-compose.dev.yml logs
+
+# Rebuild containers
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-When ingestion is enabled, the UI shows:
-- An **Ingest** button in Studio to push chunks to OpenSearch
-- An **OpenSearch** connection status badge in the sidebar
-- **Indexed / Not indexed** filters on the Documents page
-- A **Search** page for full-text and vector search across indexed documents
+### Out of memory errors
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENSEARCH_URL` | — | OpenSearch endpoint (empty = ingestion disabled) |
-| `EMBEDDING_URL` | — | Embedding service endpoint (empty = ingestion disabled) |
-| `EMBEDDING_DIMENSION` | `384` | Vector dimension (must match embedding model) |
+Increase Docker Desktop memory allocation to at least 8 GB.
 
-## Graph storage with Neo4j (opt-in)
+### Slow parsing
 
-Docling Studio can mirror the full **DoclingDocument tree** into a [Neo4j](https://neo4j.com/) graph: sections, paragraphs, tables, figures, pages, and chunks all become first-class nodes connected by `HAS_ROOT`, `PARENT_OF`, `NEXT`, `ON_PAGE`, `HAS_CHUNK`, and `DERIVED_FROM` edges. This enables queries that are impossible with a flat chunk store — navigating a document's outline, finding all tables under a given section, or tracing a chunk back to its source elements.
+- First run is slower (model downloads)
+- Reduce `MAX_PAGE_COUNT` for large documents
+- Use `table_mode: fast` for quicker table extraction
 
-Enable Neo4j with the ingestion profile (it ships alongside OpenSearch):
+### Ask feature not working
 
-```bash
-docker compose --profile ingestion \
-  -f docker-compose.yml -f docker-compose.ingestion.yml \
-  up --build
-```
-
-The Neo4j Browser is available at <http://localhost:7474> (user `neo4j`, password `changeme` by default).
-
-### Schema at a glance
-
-```mermaid
-graph TD
-    D[Document] -->|HAS_ROOT| SH[SectionHeader]
-    D -->|HAS_CHUNK| C[Chunk]
-    SH -->|PARENT_OF| P[Paragraph]
-    SH -->|PARENT_OF| T[Table]
-    P -->|NEXT| T
-    P -->|ON_PAGE| PG[Page]
-    T -->|ON_PAGE| PG
-    C -->|DERIVED_FROM| P
-    C -->|DERIVED_FROM| T
-```
-
-### Example Cypher queries
-
-Find all "Methods" sections across documents (impossible in vector-only stores):
-
-```cypher
-MATCH (d:Document)-[:HAS_ROOT]->(:Element)-[:PARENT_OF*]->(s:SectionHeader)
-WHERE toLower(s.text) CONTAINS 'method'
-RETURN d.title, s.text, s.level
-```
-
-Get the parent section and sibling elements of a chunk (context for RAG):
-
-```cypher
-MATCH (c:Chunk {id: $chunk_id})-[:DERIVED_FROM]->(e:Element)
-MATCH (e)<-[:PARENT_OF]-(parent:Element)-[:PARENT_OF]->(sibling:Element)
-RETURN parent, collect(sibling) AS siblings
-```
-
-List all tables from documents ingested from an `invoices/` path:
-
-```cypher
-MATCH (d:Document)-[:HAS_ROOT]->(:Element)-[:PARENT_OF*]->(t:Table)
-WHERE d.source_uri CONTAINS 'invoices/'
-RETURN d.title, t.caption, t.cells_json
-```
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `NEO4J_URI` | — | Neo4j Bolt endpoint (empty = graph storage disabled) |
-| `NEO4J_USER` | `neo4j` | Neo4j username |
-| `NEO4J_PASSWORD` | `changeme` | Neo4j password |
-
-The in-app **Graph** tab (under *Results*) renders the per-document graph with [Cytoscape.js](https://js.cytoscape.org/) (see [ADR-001](docs/architecture/adrs/ADR-001-graph-visualization-library.md) for the library choice). Documents with more than **200 pages** return `HTTP 413` from `GET /api/documents/{id}/graph`; pagination ships in v0.6.
-
-## Live Reasoning (opt-in, R&D)
-
-Docling Studio can run [docling-agent](https://github.com/docling-project/docling-agent)'s Chunkless RAG loop against an analyzed document and return a full **reasoning trace** — the path the agent walked through the document outline, with the section reference / rationale / answer for each iteration. The trace is overlaid on the document graph so you can *see* how the agent navigated the structure.
-
-Disabled by default — pulls heavy deps (`docling-agent`, `mellea`, ~60 MB) and needs a reachable Ollama instance with the target model already pulled.
-
-### Enable
-
-```bash
-export REASONING_ENABLED=true
-export OLLAMA_HOST=http://localhost:11434      # default
-export REASONING_MODEL_ID=gpt-oss:20b           # any model already pulled in Ollama
-# Optional, future-proof — only "ollama" is realizable today (see Architecture below):
-export LLM_PROVIDER_TYPE=ollama
-```
-
-Then `pip install docling-agent mellea` (or use the `local` Docker image which bundles them) and restart the backend. The frontend reads `reasoningAvailable` from `/api/health` and hides the **Reasoning** sidebar entry when the runner isn't wired — so users never click through to a 503.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REASONING_ENABLED` | `false` | Master switch — `true` to enable the live runner |
-| `OLLAMA_HOST` | `http://localhost:11434` | Ollama daemon URL |
-| `REASONING_MODEL_ID` | `gpt-oss:20b` | Default model id (per-call override allowed via the API) |
-| `LLM_PROVIDER_TYPE` | `ollama` | LLM backend selector — only `ollama` is supported today |
-
-### Architecture
-
-The reasoning subsystem is wired through a `ReasoningRunner` port (`document-parser/domain/ports.py`) and an `LLMProvider` abstraction:
-
-- `domain/ports.py` defines `ReasoningRunner`, `LLMProvider`, `ReasoningParseError` (no third-party imports)
-- `domain/value_objects.py` defines `LLMProviderType`, `ReasoningResult`, `ReasoningIteration`
-- `infra/llm/ollama_provider.py` implements `LLMProvider` for Ollama
-- `infra/docling_agent_reasoning.py` implements `ReasoningRunner` using docling-agent + mellea — all upstream coupling is here, including the `_rag_loop` workaround tracked at [docling-agent#26](https://github.com/docling-project/docling-agent/issues/26)
-- `api/reasoning.py` consumes `app.state.reasoning_runner` — zero coupling to docling-agent
-
-This makes alternate LLM backends a question of adding new `LLMProvider` adapters once docling-agent (or a replacement) supports them upstream.
-
-## CI / Release
-
-GitHub Actions pipelines (see [`.github/workflows/`](.github/workflows/)):
-
-| Workflow | Trigger | What it does |
-|----------|---------|--------------|
-| **CI** | push to `main`, pull requests | Lint + type check + Backend tests + Frontend tests + build |
-| **Release** | push tag `v*` | Build & push **two** multi-arch Docker images (`remote` + `local`) to `ghcr.io` |
-| **Docs** | push to `main` (docs changes) | Build & deploy MkDocs to GitHub Pages |
-
-We follow [Semantic Versioning](https://semver.org/) with a simplified Git Flow. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full release process.
-
-## Performance & System Requirements
-
-| Document type | Pages | Approx. time (CPU) |
-|---------------|-------|---------------------|
-| Simple report | 5–10  | ~30s–1 min |
-| Research paper | 10–30 | ~1–2 min |
-| Large document | 100+  | ~2–5 min |
-
-### Docker Desktop settings
-
-| | Remote image | Local image |
-|---|---|---|
-| **Image size** | ~270 MB | ~1.9 GB |
-| **Memory** | 2 GB | 6 GB (recommended 8 GB+) |
-| **CPUs** | 2 | 4 (recommended 8+) |
-
-### Platform support
-
-All Docker images are multi-arch (linux/amd64 + linux/arm64). No GPU required.
-
-## Tech Stack
-
-- **Frontend**: Vue 3, TypeScript, Vite, Pinia, DOMPurify
-- **Backend**: FastAPI, Docling 2.x, SQLite (aiosqlite), pdf2image
-- **CI**: GitHub Actions
-- **Infra**: Docker Compose + Nginx
-
-## Contributing
-
-Contributions are welcome! Please open an issue first to discuss what you'd like to change.
+- Verify Ollama is running: `ollama ps`
+- Check model is pulled: `ollama list`
+- Review backend logs for connection errors
 
 ## License
 
-[MIT](LICENSE) — Pier-Jean Malandrino
+MIT - Based on [Docling Studio](https://github.com/scub-france/Docling-Studio) by Pier-Jean Malandrino
