@@ -26,6 +26,10 @@
 
     <!-- Message list -->
     <div class="ask-messages" ref="messagesEl" data-e2e="ask-messages">
+      <!-- Ollama connectivity warning -->
+      <div v-if="ollamaWarning" class="ask-error ask-ollama-warning" data-e2e="ask-ollama-warning">
+        ⚠ {{ ollamaWarning }}
+      </div>
       <!-- Empty state -->
       <div v-if="messages.length === 0" class="ask-empty">
         <div class="ask-empty-icon">💬</div>
@@ -119,7 +123,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted } from 'vue'
 import { useI18n } from '../shared/i18n'
 import { useChatStore } from '../features/chat/store'
 
@@ -137,11 +141,30 @@ const inputEl = ref<HTMLTextAreaElement | null>(null)
 const DEFAULT_MODEL = 'gemma4:e4b'
 const modelId = ref('')
 
+const ollamaWarning = ref<string | null>(null)
+
 const docChat = computed(() => chatStore.getChat(props.docId))
 const messages = computed(() => docChat.value.messages)
 const chatError = computed(() => docChat.value.error)
 
 const suggestions = [t('ask.suggestion1')]
+
+onMounted(async () => {
+  try {
+    const resp = await fetch('/api/documents/ollama-status')
+    if (resp.ok) {
+      const status = await resp.json()
+      if (!status.reachable) {
+        ollamaWarning.value =
+          `Ollama is not reachable at ${status.host}. ` +
+          `Make sure Ollama is running and the model "${status.model}" is pulled ` +
+          `(ollama pull ${status.model}).`
+      }
+    }
+  } catch {
+    // silently ignore — the chat endpoint will surface the error when needed
+  }
+})
 
 const canSend = computed(() => draft.value.trim().length > 0 && !streaming.value)
 
@@ -551,6 +574,10 @@ async function onSend(): Promise<void> {
   color: var(--error);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.ask-ollama-warning {
+  flex-shrink: 0;
 }
 
 /* Input */

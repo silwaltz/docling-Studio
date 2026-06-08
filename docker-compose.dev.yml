@@ -112,6 +112,10 @@ services:
       # for the one-liner to generate a key. No default on purpose: a dev
       # who creates a sealed store must persist the key in their own .env.
       STORE_SECRET_KEY: ${STORE_SECRET_KEY:-}
+      # Document Q&A chat via Ollama (running on host)
+      CHAT_ENABLED: ${CHAT_ENABLED:-true}
+      CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
     command:
       ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     depends_on:

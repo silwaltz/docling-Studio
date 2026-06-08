@@ -105,6 +105,20 @@ async def _stream_ollama(
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
+@router.get("/ollama-status")
+async def ollama_status() -> dict:
+    """Quick reachability probe — returns whether Ollama is accessible from the backend."""
+    host = settings.ollama_host
+    reachable = False
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{host.rstrip('/')}/api/tags")
+            reachable = resp.status_code == 200
+    except Exception:
+        pass
+    return {"reachable": reachable, "host": host, "model": settings.chat_model_id}
+
+
 @router.post("/{doc_id}/chat")
 async def chat(doc_id: str, body: ChatRequest, request: Request) -> StreamingResponse:
     if not settings.chat_enabled:

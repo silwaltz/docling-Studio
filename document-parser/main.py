@@ -405,6 +405,13 @@ if settings.rate_limit_rpm > 0:
         window_seconds=60,
     )
 
+# Document Q&A chat — direct Ollama /api/chat, no heavy deps.
+# Mounted BEFORE documents_router to ensure /ollama-status doesn't get
+# caught by the /{doc_id} catch-all route.
+from api.chat import router as chat_router  # noqa: E402
+
+app.include_router(chat_router)
+
 app.include_router(documents_router)
 app.include_router(document_chunks_router)
 app.include_router(analyses_router)
@@ -419,11 +426,6 @@ app.include_router(document_versions_router)
 from api.graph import router as graph_router  # noqa: E402
 
 app.include_router(graph_router)
-
-# Document Q&A chat — direct Ollama /api/chat, no heavy deps.
-from api.chat import router as chat_router  # noqa: E402
-
-app.include_router(chat_router)
 
 # Live reasoning (docling-agent runner). Router is mounted unconditionally so
 # the route is introspectable in OpenAPI; the handler itself 503s when
