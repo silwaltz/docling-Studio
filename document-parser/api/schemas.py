@@ -102,6 +102,7 @@ class AnalysisResponse(_CamelModel):
     status: str
     content_markdown: str | None = None
     content_html: str | None = None
+    content_json: str | None = None
     pages_json: str | None = None
     chunks_json: str | None = None
     has_document_json: bool = False
@@ -162,6 +163,11 @@ class PipelineOptionsRequest(BaseModel):
         validation_alias=AliasChoices("preprocess_pdf_dpi", "preprocessPdfDpi"),
         description="DPI for PDF preprocessing (0 = disabled, 300 = recommended for scanned docs)",
     )
+    vlm_backend: str = Field(
+        default="",
+        validation_alias=AliasChoices("vlm_backend", "vlmBackend"),
+        description="VLM backend: 'ollama' or 'granite' (empty = server default). Only used with force_vlm_pipeline.",
+    )
     vlm_image_scale: float = Field(
         default=0.0,
         validation_alias=AliasChoices("vlm_image_scale", "vlmImageScale"),
@@ -173,6 +179,13 @@ class PipelineOptionsRequest(BaseModel):
     def validate_preprocess_pdf_dpi(cls, v: int) -> int:
         if v < 0 or v > 600:
             raise ValueError("preprocess_pdf_dpi must be between 0 and 600")
+        return v
+
+    @field_validator("vlm_backend")
+    @classmethod
+    def validate_vlm_backend(cls, v: str) -> str:
+        if v and v not in ("ollama", "granite"):
+            raise ValueError("vlm_backend must be 'ollama', 'granite', or empty string")
         return v
 
     @field_validator("vlm_image_scale")

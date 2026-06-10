@@ -66,14 +66,30 @@ class Settings:
     cors_origins: list[str] = field(
         default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
     )
+    # VLM backend selection: "ollama" (remote via Ollama API) or "granite" (in-process transformers)
+    vlm_backend: str = "ollama"  # Default to Ollama per user request
     # VLM fallback model for OCR fallback when standard pipeline fails
     # Uses Docling's VlmPipeline with the specified model spec
     vlm_fallback_model: str = "GRANITEDOCLING_TRANSFORMERS"  # Default: Granite-Docling-258M
-    # Page-image render scale fed to the VLM model. The granite-docling default
-    # (2.0) is too low for dense full-page documents — the 258M model can only
-    # read large header text and misses the body. 4.0 lets it read nearly all
-    # text. Higher = more complete but slower / more memory. Tune per hardware.
-    vlm_image_scale: float = 4.0
+    # Ollama VLM model (used when vlm_backend="ollama")
+    vlm_ollama_model: str = "qwen3-vl:8b"
+    # Ollama VLM prompt for document conversion
+    vlm_ollama_prompt: str = (
+        """
+        Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.
+        """
+    )
+    # Max tokens for Ollama VLM output (qwen3-vl:8b supports up to 262k context)
+    # 131072 tokens (128k) ≈ 96,000 words, enough for very dense multi-page documents
+    # Higher resolution images need more tokens to describe
+    vlm_ollama_max_tokens: int = 131072
+    # Timeout for remote VLM API calls (seconds)
+    vlm_remote_timeout: int = 3600
+    # Page-image render scale fed to the VLM model.
+    # 2.0 = balanced quality/speed for most documents
+    # 4.0 = very high detail but requires more tokens and processing time
+    # Higher scale = more complete OCR but slower and needs higher max_tokens
+    vlm_image_scale: float = 2.0
     # 0.6.1 — Surface flags (#257). Two master flags select which UI surface
     # is exposed: STUDIO_MODE_ENABLED (legacy OCR-debug) and
     # RAG_PIPELINE_ENABLED (new doc-centric ingestion + visualization).
@@ -125,6 +141,14 @@ class Settings:
             errors.append("at least one of STUDIO_MODE_ENABLED / RAG_PIPELINE_ENABLED must be true")
         if self.vlm_image_scale <= 0:
             errors.append(f"vlm_image_scale must be > 0 (got {self.vlm_image_scale})")
+        if self.vlm_backend not in ("ollama", "granite"):
+            errors.append(
+                f"vlm_backend must be 'ollama' or 'granite' (got '{self.vlm_backend}')"
+            )
+        if self.vlm_remote_timeout <= 0:
+            errors.append(f"vlm_remote_timeout must be > 0 (got {self.vlm_remote_timeout})")
+        if self.vlm_ollama_max_tokens <= 0:
+            errors.append(f"vlm_ollama_max_tokens must be > 0 (got {self.vlm_ollama_max_tokens})")
         if self.default_table_mode not in ("accurate", "fast"):
             errors.append(
                 f"default_table_mode must be 'accurate' or 'fast' (got '{self.default_table_mode}')"
@@ -192,8 +216,20 @@ class Settings:
             max_paste_image_size_mb=int(os.environ.get("MAX_PASTE_IMAGE_SIZE_MB", "10")),
             paste_allowed_image_types=[t.strip() for t in paste_types_raw.split(",") if t.strip()],
             cors_origins=[o.strip() for o in cors_raw.split(",")],
+            vlm_backend=os.environ.get("VLM_BACKEND", "ollama"),
             vlm_fallback_model=os.environ.get("VLM_FALLBACK_MODEL", "GRANITEDOCLING_TRANSFORMERS"),
-            vlm_image_scale=float(os.environ.get("VLM_IMAGE_SCALE", "4.0")),
+            vlm_ollama_model=os.environ.get("VLM_OLLAMA_MODEL", "qwen3-vl:8b"),
+            vlm_ollama_prompt=os.environ.get(
+                "VLM_OLLAMA_PROMPT",
+                (
+                    """
+                    Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.
+                    """
+                )
+            ),
+            vlm_ollama_max_tokens=int(os.environ.get("VLM_OLLAMA_MAX_TOKENS", "131072")),
+            vlm_remote_timeout=int(os.environ.get("VLM_REMOTE_TIMEOUT", "3600")),
+            vlm_image_scale=float(os.environ.get("VLM_IMAGE_SCALE", "2.0")),
             # 0.6.1 — Surface flags (#257).
             studio_mode_enabled=os.environ.get("STUDIO_MODE_ENABLED", "false").lower()
             in ("1", "true", "yes", "on"),

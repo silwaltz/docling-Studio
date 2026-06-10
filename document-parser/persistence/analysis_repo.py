@@ -23,6 +23,7 @@ def _row_to_job(row) -> AnalysisJob:
         status=AnalysisStatus(row["status"]),
         content_markdown=row["content_markdown"],
         content_html=row["content_html"],
+        content_json=row["content_json"] if "content_json" in keys else None,
         pages_json=row["pages_json"],
         document_json=row["document_json"] if "document_json" in keys else None,
         chunks_json=row["chunks_json"] if "chunks_json" in keys else None,
@@ -108,7 +109,7 @@ class SqliteAnalysisRepository:
         async with get_connection() as db:
             await db.execute(
                 """UPDATE analysis_jobs
-                   SET status = ?, content_markdown = ?, content_html = ?,
+                   SET status = ?, content_markdown = ?, content_html = ?, content_json = ?,
                        pages_json = ?, document_json = ?, chunks_json = ?,
                        error_message = ?, progress_current = ?, progress_total = ?,
                        started_at = ?, completed_at = ?
@@ -117,6 +118,7 @@ class SqliteAnalysisRepository:
                     job.status.value,
                     job.content_markdown,
                     job.content_html,
+                    job.content_json,
                     job.pages_json,
                     job.document_json,
                     job.chunks_json,

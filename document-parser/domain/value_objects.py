@@ -112,6 +112,8 @@ class ConversionOptions:
     images_scale: float = 1.0
     force_vlm_pipeline: bool = False  # Force use of VLM Pipeline instead of standard pipeline
     preprocess_pdf_dpi: int = 0  # DPI for PDF preprocessing (0 = disabled, 300 = recommended for scanned docs)
+    # VLM backend selection: "ollama" (remote) or "granite" (in-process). Empty string = use server default.
+    vlm_backend: str = ""
     # Page-image render scale fed to the VLM model. Higher = the model reads
     # more (small) text but is slower / heavier. 0 = use server default
     # (settings.vlm_image_scale). Only used when force_vlm_pipeline is True.
@@ -130,6 +132,7 @@ class ConversionResult:
     pages: list[PageDetail]
     skipped_items: int = 0
     document_json: str | None = None
+    content_json: str | None = None  # Structured JSON extraction from VLM
 
 
 @dataclass(frozen=True)

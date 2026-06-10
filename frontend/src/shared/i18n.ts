@@ -156,6 +156,10 @@ const messages: Messages = {
       'Force l\'utilisation du Pipeline VLM de Docling au lieu du pipeline standard. Utilise un modèle Vision-Language pour la conversion complète du document.',
     'config.standardOptions': 'Options du pipeline standard',
     'config.vlmOptions': 'Options du pipeline VLM',
+    'config.vlmBackend': 'Moteur VLM',
+    'config.vlmBackendHint': 'Sélectionne le moteur VLM : Granite (local, transformers) ou Qwen3-VL (Ollama, distant).',
+    'config.vlmBackendGranite': 'Granite (local)',
+    'config.vlmBackendOllama': 'Qwen3-VL (Ollama)',
     'config.vlmImageScale': 'Résolution',
     'config.vlmImageScaleHint':
       'Échelle de rendu de la page transmise au modèle VLM. Une résolution plus élevée permet de lire davantage de petit texte, mais ralentit le traitement.',
@@ -826,6 +830,10 @@ const messages: Messages = {
       'Force use of Docling\'s VLM Pipeline instead of the standard pipeline. Uses a Vision-Language model for full document conversion.',
     'config.standardOptions': 'Standard pipeline options',
     'config.vlmOptions': 'VLM pipeline options',
+    'config.vlmBackend': 'VLM Engine',
+    'config.vlmBackendHint': 'Select VLM engine: Granite (local, transformers) or Qwen3-VL (Ollama, remote).',
+    'config.vlmBackendGranite': 'Granite (local)',
+    'config.vlmBackendOllama': 'Qwen3-VL (Ollama)',
     'config.vlmImageScale': 'Resolution',
     'config.vlmImageScaleHint':
       'Page render scale fed to the VLM model. Higher resolution lets it read more small text but is slower.',

@@ -55,6 +55,7 @@ export interface PipelineOptions {
   images_scale?: number
   force_vlm_pipeline?: boolean
   preprocess_pdf_dpi?: number  // DPI for PDF preprocessing (0 = disabled, 300 = recommended)
+  vlm_backend?: string  // VLM backend: 'ollama' or 'granite' (empty = server default). Only used with force_vlm_pipeline.
   vlm_image_scale?: number  // VLM page render scale (0 = server default). Only used with force_vlm_pipeline.
 }
 
@@ -67,6 +68,7 @@ export interface Analysis {
   status: AnalysisStatus
   contentMarkdown: string | null
   contentHtml: string | null
+  contentJson: string | null
   pagesJson: string | null
   chunksJson: string | null
   hasDocumentJson: boolean

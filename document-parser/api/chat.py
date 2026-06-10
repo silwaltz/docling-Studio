@@ -26,12 +26,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["chat"])
 
 _SYSTEM_PROMPT = (
-    "You are a helpful assistant that answers questions about the provided document. "
-    "Use only information from the document context below. "
-    "If the answer is not in the document, say so clearly. "
-    "Be concise and precise. When suggesting changes or improvements, be specific "
-    "about what to change and why.\n\n"
-    "DOCUMENT CONTEXT:\n{context}"
+    """
+    Return json format with below structure:
+    {{
+        "Company Name1": "value1",
+        "Address1": "value1",
+        "Shipping Information1": "value1",
+        "Good Description1": "value1",
+    }}
+    Only these four sections are allowed, add more rows if you find more than one entry for each section. No duplication.
+    Return all company first, then address, then shipping information, then good description.
+    Document context: {context}
+    """
 )
 
 _MAX_CONTEXT_CHARS = 32_000  # ~8k tokens — keeps prompt within typical context windows

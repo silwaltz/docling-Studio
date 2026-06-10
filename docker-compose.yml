@@ -121,6 +121,14 @@ services:
       CHAT_ENABLED: ${CHAT_ENABLED:-true}
       CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # VLM backend settings
+      VLM_BACKEND: ${VLM_BACKEND:-ollama}
+      VLM_FALLBACK_MODEL: ${VLM_FALLBACK_MODEL:-GRANITEDOCLING_TRANSFORMERS}
+      VLM_OLLAMA_MODEL: ${VLM_OLLAMA_MODEL:-qwen3-vl:8b}
+      VLM_OLLAMA_PROMPT: '${VLM_OLLAMA_PROMPT:-Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. Replace newlines with spaces. Return only valid JSON.}'
+      VLM_OLLAMA_MAX_TOKENS: ${VLM_OLLAMA_MAX_TOKENS:-131072}
+      VLM_REMOTE_TIMEOUT: ${VLM_REMOTE_TIMEOUT:-3600}
+      VLM_IMAGE_SCALE: ${VLM_IMAGE_SCALE:-2.0}
     deploy:
       resources:
         limits:

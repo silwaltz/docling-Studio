@@ -82,6 +82,7 @@ class AnalysisJob:
     status: AnalysisStatus = AnalysisStatus.PENDING
     content_markdown: str | None = None
     content_html: str | None = None
+    content_json: str | None = None  # Structured JSON extraction from VLM
     pages_json: str | None = None
     document_json: str | None = None
     chunks_json: str | None = None
@@ -109,6 +110,7 @@ class AnalysisJob:
         pages_json: str,
         document_json: str | None = None,
         chunks_json: str | None = None,
+        content_json: str | None = None,
     ) -> None:
         """Transition to COMPLETED with conversion results."""
         if self.status != AnalysisStatus.RUNNING:
@@ -116,6 +118,7 @@ class AnalysisJob:
         self.status = AnalysisStatus.COMPLETED
         self.content_markdown = markdown
         self.content_html = html
+        self.content_json = content_json
         self.pages_json = pages_json
         self.document_json = document_json
         self.chunks_json = chunks_json

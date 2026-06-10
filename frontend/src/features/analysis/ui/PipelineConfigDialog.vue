@@ -77,6 +77,15 @@
             <label class="config-label">{{ t('config.vlmOptions') }}</label>
 
             <div class="config-sub-option">
+              <label class="config-label-sm">{{ t('config.vlmBackend') }}</label>
+              <select class="config-select" v-model="local.vlm_backend">
+                <option value="">{{ t('config.vlmBackendGranite') }}</option>
+                <option value="ollama">{{ t('config.vlmBackendOllama') }}</option>
+              </select>
+              <span class="config-input-hint">{{ t('config.vlmBackendHint') }}</span>
+            </div>
+
+            <div class="config-sub-option">
               <label class="config-label-sm">{{ t('config.vlmImageScale') }}</label>
               <select class="config-select" v-model.number="local.vlm_image_scale">
                 <option :value="2">{{ t('config.vlmScaleFast') }}</option>
@@ -117,6 +126,7 @@ const DEFAULT_OPTIONS: PipelineOptions = {
   do_table_structure: true,
   table_mode: 'accurate',
   force_vlm_pipeline: false,
+  vlm_backend: '',
   vlm_image_scale: 4,
 }
 

@@ -101,7 +101,8 @@ Docling Studio is a document analysis platform with FastAPI backend (hexagonal a
 
 ## User Preferences
 
-When the user requests a durable behavior change, record it here or in the relevant child AGENTS.md
+- **VLM Backend**: Default VLM backend is `ollama` (qwen3-vl:8b hosted on Ollama) instead of `granite` (in-process transformers). Users can select per-analysis via frontend UI or set globally via `VLM_BACKEND` env var.
+- **Ask Feature**: System prompt configured to extract trade/shipping document data as JSON array with `section`, `field`, `value` structure. Frontend auto-detects and allows JSON download.
 
 ## Child DOX Index
 

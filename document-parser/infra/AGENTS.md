@@ -13,6 +13,7 @@ Backend team owns adapter implementations and external service integrations.
 - **Adapters**: Implement protocols defined in `domain/ports.py`
 - **Settings**: All config via `settings.py` (env vars with defaults)
 - **External services**: Docling Serve, Ollama, Neo4j, OpenSearch
+- **VLM backends**: Two VLM converter variants - `granite` (in-process transformers) and `ollama` (remote API via qwen3-vl:8b)
 - **Error handling**: Catch external errors, translate to domain exceptions
 - **Timeouts**: Configure timeouts for all external HTTP calls
 - **Retries**: Implement retry logic for transient failures

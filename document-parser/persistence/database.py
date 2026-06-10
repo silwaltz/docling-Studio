@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
                       CHECK (status IN ('PENDING','RUNNING','COMPLETED','FAILED')),
     content_markdown  TEXT,
     content_html      TEXT,
+    content_json      TEXT,
     pages_json        TEXT,
     document_json     TEXT,
     chunks_json       TEXT,

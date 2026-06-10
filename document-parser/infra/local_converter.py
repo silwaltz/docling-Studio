@@ -29,6 +29,122 @@ from docling.datamodel import vlm_model_specs
 from docling.document_converter import DocumentConverter as DoclingConverter
 from docling.document_converter import PdfFormatOption
 from docling.pipeline.vlm_pipeline import VlmPipeline
+
+# CRITICAL: Patch VLM engine to log what's happening with qwen3-vl
+import logging
+_patch_logger = logging.getLogger(__name__)
+
+def _apply_vlm_debug_patch():
+    """Apply minimal logging patch to VLM engine to debug qwen3-vl."""
+    try:
+        import time
+        
+        # Page counter for timing logs (reset per document)
+        page_counter = {'current': 0}
+        # Storage for per-page JSON responses
+        page_responses = {'jsons': []}
+        
+        # Patch at the lowest level - the actual HTTP request
+        import requests
+        original_post = requests.post
+        
+        def logged_post(url, *args, **kwargs):
+            result = original_post(url, *args, **kwargs)
+            if 'chat/completions' in str(url):
+                try:
+                    response_data = result.json()
+                    if 'choices' in response_data and response_data['choices']:
+                        msg = response_data['choices'][0].get('message', {})
+                        content = msg.get('content', '')
+                        reasoning = msg.get('reasoning', '')
+                        _patch_logger.info(f"🔧 RAW Ollama response: content_len={len(content)}, reasoning_len={len(reasoning)}")
+                        
+                        # Determine the actual response text (for JSON collection)
+                        actual_response = content
+                        
+                        # FIX: qwen3-vl puts output in 'reasoning' field when doing CoT
+                        # If content is empty but reasoning has data, use reasoning as content
+                        if not content and reasoning:
+                            _patch_logger.info(f"🔧 FIXING: Moving reasoning to content (qwen3-vl CoT behavior)")
+                            response_data['choices'][0]['message']['content'] = reasoning
+                            actual_response = reasoning
+                            # Replace the response content with fixed JSON
+                            import json
+                            fixed_json = json.dumps(response_data)
+                            # Monkey-patch the response's content and _content
+                            result._content = fixed_json.encode('utf-8')
+                            # Clear the cached JSON so it re-parses from our fixed content
+                            if hasattr(result, '_json'):
+                                delattr(result, '_json')
+                            _patch_logger.info(f"🔧 Fixed content preview: {reasoning[:200]}")
+                        elif content:
+                            _patch_logger.info(f"🔧 Content preview: {content[:200]}")
+                        else:
+                            _patch_logger.warning(f"🔧 CONTENT IS EMPTY!")
+                        
+                        # Store the actual response for JSON merging
+                        if actual_response:
+                            page_responses['jsons'].append(actual_response)
+                            _patch_logger.info(f"🔧 Stored JSON response ({len(actual_response)} chars)")
+                        
+                        if reasoning and content:  # Only log if both exist
+                            _patch_logger.info(f"🔧 Reasoning preview: {reasoning[:200]}")
+                except Exception as e:
+                    _patch_logger.error(f"🔧 Error parsing/fixing response: {e}")
+            return result
+        
+        requests.post = logged_post
+        
+        # Also patch the API request function to log responses with timing
+        import docling.utils.api_image_request as api_module
+        original_api_request = api_module.api_image_request
+        
+        def logged_api_request(image, prompt, url, timeout=20, headers=None, **params):
+            page_counter['current'] += 1
+            page_num = page_counter['current']
+            
+            _patch_logger.info(f"🔧 VLM processing page {page_num}...")
+            start_time = time.time()
+            
+            result_text, num_tokens, stop_reason = original_api_request(image, prompt, url, timeout, headers, **params)
+            
+            elapsed = time.time() - start_time
+            _patch_logger.info(f"📄 Page {page_num} processed in {elapsed:.1f}s (tokens: {num_tokens}, chars: {len(result_text)})")
+            
+            # JSON response is already stored in logged_post function
+            if result_text:
+                _patch_logger.info(f"🔧 Response preview: {result_text[:200]}")
+            else:
+                _patch_logger.warning(f"🔧 EMPTY RESPONSE from API!")
+            return result_text, num_tokens, stop_reason
+        
+        # Store references for reset and retrieval
+        logged_api_request._page_counter = page_counter
+        logged_api_request._page_responses = page_responses
+        
+        api_module.api_image_request = logged_api_request
+        
+        # Also patch streaming version
+        original_streaming = api_module.api_image_request_streaming
+        
+        def logged_streaming(image, prompt, url, timeout=20, headers=None, generation_stoppers=[], **params):
+            _patch_logger.info(f"🔧 Streaming API request: url={url}, params={params}")
+            result_text, num_tokens = original_streaming(image, prompt, url, timeout, headers, generation_stoppers, **params)
+            _patch_logger.info(f"🔧 Streaming response: text_len={len(result_text)}, tokens={num_tokens}")
+            if result_text:
+                _patch_logger.info(f"🔧 Streaming preview: {result_text[:200]}")
+            else:
+                _patch_logger.warning(f"🔧 EMPTY STREAMING RESPONSE!")
+            return result_text, num_tokens
+        
+        api_module.api_image_request_streaming = logged_streaming
+        
+        _patch_logger.info("✅ VLM API debug patch applied")
+    except Exception as e:
+        _patch_logger.error(f"Failed to apply VLM patch: {e}")
+
+_apply_vlm_debug_patch()
+
 from docling_core.types.doc import (
     CodeItem,
     DocItem,
@@ -299,49 +415,43 @@ def _process_content_item(
 # ---------------------------------------------------------------------------
 
 
-def _build_vlm_converter(options: ConversionOptions | None = None) -> DoclingConverter:
-    """Build a Docling converter using VLM Pipeline.
-
-    Two tuning fixes are applied on top of the stock granite-docling spec to
-    get complete, clean extraction:
-
-    1. repetition_penalty (1.1) — without it the model can enter a degenerate
-       decoding loop on some documents, emitting only left-margin row numbers
-       ("1 2 3 ...") then repeating a single token ("71 71 71 ...") until it
-       exhausts max_new_tokens. The penalty breaks that loop so the model reads
-       the actual document content. (no_repeat_ngram_size is intentionally NOT
-       used — it corrupts the DocTags format, whose tags repeat by design.)
-
-    2. image scale — the stock scale of 2.0 renders dense full-page documents
-       too small for the 258M model to read body text, so it captures only large
-       header text. Bumping the scale feeds a higher-resolution page image and
-       recovers nearly all the text. The scale comes from the per-analysis
-       option (options.vlm_image_scale) when set, else settings.vlm_image_scale.
-    """
+def _build_ollama_vlm_converter(options: ConversionOptions | None = None) -> DoclingConverter:
+    """Build Ollama VLM converter using remote API."""
+    from docling.datamodel.pipeline_options_vlm_model import ApiVlmOptions, ResponseFormat
+    
     try:
-        # Get the model spec from settings
-        model_spec_name = settings.vlm_fallback_model
-        model_spec = getattr(vlm_model_specs, model_spec_name, vlm_model_specs.GRANITEDOCLING_TRANSFORMERS)
-
-        # Clone the spec and inject a repetition penalty into the generation
-        # config to prevent degenerate repetition loops.
-        vlm_options = model_spec.model_copy(deep=True)
-        gen_config = dict(vlm_options.extra_generation_config or {})
-        gen_config.setdefault("repetition_penalty", 1.1)
-        vlm_options.extra_generation_config = gen_config
-
-        # Resolve the page-image render scale: per-analysis override wins,
-        # otherwise fall back to the server default (see docstring).
         image_scale = settings.vlm_image_scale
         if options is not None and options.vlm_image_scale > 0:
             image_scale = options.vlm_image_scale
-        vlm_options.scale = image_scale
-
+        
+        ollama_url = f"{settings.ollama_host.rstrip('/')}/v1/chat/completions"
+        logger.info(f"Building Ollama VLM converter (model: {settings.vlm_ollama_model}, scale: {image_scale})")
+        logger.info(f"Ollama URL: {ollama_url}")
+        logger.info(f"Max tokens: {settings.vlm_ollama_max_tokens}, Timeout: {settings.vlm_remote_timeout}s")
+        
+        vlm_options = ApiVlmOptions(
+            url=ollama_url,
+            params={
+                "model": settings.vlm_ollama_model,
+                "max_tokens": settings.vlm_ollama_max_tokens,
+                "num_ctx": settings.vlm_ollama_max_tokens,  # Context window size
+            },
+            prompt=settings.vlm_ollama_prompt,
+            timeout=settings.vlm_remote_timeout,
+            scale=image_scale,
+            temperature=0.0,
+            response_format=ResponseFormat.MARKDOWN,
+            concurrency=1,
+        )
+        
+        logger.info(f"ApiVlmOptions created: url={vlm_options.url}, params={vlm_options.params}")
+        
         pipeline_options = VlmPipelineOptions(
             vlm_options=vlm_options,
+            enable_remote_services=True,  # Required for API-based VLM
         )
         pipeline_options.images_scale = image_scale
-
+        
         return DoclingConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(
@@ -351,8 +461,127 @@ def _build_vlm_converter(options: ConversionOptions | None = None) -> DoclingCon
             }
         )
     except Exception as exc:
+        logger.warning("Failed to build Ollama VLM converter: %s", exc)
+        raise
+
+
+def _build_granite_vlm_converter(options: ConversionOptions | None = None) -> DoclingConverter:
+    """Build Granite VLM converter using in-process transformers."""
+    try:
+        logger.info("Building Granite VLM converter (in-process transformers)")
+        model_spec_name = settings.vlm_fallback_model
+        model_spec = getattr(vlm_model_specs, model_spec_name, vlm_model_specs.GRANITEDOCLING_TRANSFORMERS)
+        
+        vlm_options = model_spec.model_copy(deep=True)
+        gen_config = dict(vlm_options.extra_generation_config or {})
+        gen_config.setdefault("repetition_penalty", 1.1)
+        vlm_options.extra_generation_config = gen_config
+        
+        image_scale = settings.vlm_image_scale
+        if options is not None and options.vlm_image_scale > 0:
+            image_scale = options.vlm_image_scale
+        vlm_options.scale = image_scale
+        
+        pipeline_options = VlmPipelineOptions(vlm_options=vlm_options)
+        pipeline_options.images_scale = image_scale
+        
+        return DoclingConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_cls=VlmPipeline,
+                    pipeline_options=pipeline_options,
+                ),
+            }
+        )
+    except Exception as exc:
+        logger.warning("Failed to build Granite VLM converter: %s", exc)
+        raise
+
+
+def _build_vlm_converter(options: ConversionOptions | None = None) -> DoclingConverter:
+    """Build a Docling converter using VLM Pipeline.
+    
+    Selects between Ollama (remote API) or Granite (in-process) based on vlm_backend setting.
+    """
+    try:
+        # Determine which backend to use
+        backend = settings.vlm_backend  # Default from settings
+        if options is not None and options.vlm_backend:
+            backend = options.vlm_backend  # Per-analysis override
+        
+        logger.info(f"VLM backend selected: {backend}")
+        
+        if backend == "ollama":
+            return _build_ollama_vlm_converter(options)
+        else:
+            return _build_granite_vlm_converter(options)
+    except Exception as exc:
         logger.warning("Failed to build VLM converter: %s", exc)
         raise
+
+
+def _merge_vlm_json_pages(page_jsons: list[str]) -> str:
+    """Merge per-page JSON extractions into a single deduplicated JSON.
+    
+    Args:
+        page_jsons: List of JSON strings, one per page
+        
+    Returns:
+        Single merged JSON string with deduplicated values
+    """
+    import json
+    
+    # Collect all values by section
+    sections = {
+        "Company Name": [],
+        "Address": [],
+        "Shipping Information": [],
+        "Good Description": []
+    }
+    
+    for page_json in page_jsons:
+        if not page_json or not page_json.strip():
+            continue
+            
+        try:
+            # Parse JSON from page
+            data = json.loads(page_json)
+            
+            # Extract values by section
+            for key, value in data.items():
+                # Determine section from key prefix
+                if key.startswith("Company Name"):
+                    sections["Company Name"].append(value)
+                elif key.startswith("Address"):
+                    sections["Address"].append(value)
+                elif key.startswith("Shipping Information"):
+                    sections["Shipping Information"].append(value)
+                elif key.startswith("Good Description"):
+                    sections["Good Description"].append(value)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse VLM JSON from page: {e}")
+            continue
+    
+    # Deduplicate values (case-insensitive, trimmed)
+    merged = {}
+    counter = 1
+    
+    for section_name in ["Company Name", "Address", "Shipping Information", "Good Description"]:
+        values = sections[section_name]
+        seen = set()
+        
+        for value in values:
+            if not value:
+                continue
+            # Normalize for deduplication
+            normalized = value.strip().lower()
+            if normalized not in seen:
+                seen.add(normalized)
+                key = f"{section_name}{counter}"
+                merged[key] = value.strip()
+                counter += 1
+    
+    return json.dumps(merged, indent=2, ensure_ascii=False)
 
 
 def _clean_vlm_markdown(markdown: str) -> str:
@@ -855,6 +1084,20 @@ def _convert_sync(
         )
     try:
         conv = _select_converter(options)
+        
+        # Reset VLM page counter and responses for this document
+        if options.force_vlm_pipeline:
+            try:
+                import docling.utils.api_image_request as api_module
+                if hasattr(api_module.api_image_request, '_page_counter'):
+                    api_module.api_image_request._page_counter['current'] = 0
+                    logger.info("VLM page counter reset for new document")
+                if hasattr(api_module.api_image_request, '_page_responses'):
+                    api_module.api_image_request._page_responses['jsons'] = []
+                    logger.info("VLM page responses cleared for new document")
+            except Exception as e:
+                logger.warning(f"Could not reset VLM counters: {e}")
+        
         kwargs: dict = {}
         if settings.max_page_count > 0:
             kwargs["max_num_pages"] = settings.max_page_count
@@ -876,24 +1119,37 @@ def _convert_sync(
     page_count = len(doc.pages)
     pages_detail, skipped = _extract_pages_detail(result)
 
-    # VLM Pipeline — the granite-docling model emits DocTags with per-item
-    # bbox locations, so the document carries the same structure as the
-    # standard pipeline (texts/tables/pictures with prov). We therefore reuse
-    # the standard extraction path (`_extract_pages_detail` above +
-    # `export_to_dict` below) and only post-process the markdown to strip the
-    # model's <!-- image --> placeholders and any residual repetition.
+    # VLM Pipeline — Extract JSON data from per-page responses and merge
     if options.force_vlm_pipeline:
+        # Retrieve per-page JSON responses from the monkey patch
+        content_json = None
+        try:
+            import docling.utils.api_image_request as api_module
+            if hasattr(api_module.api_image_request, '_page_responses'):
+                page_jsons = api_module.api_image_request._page_responses['jsons']
+                if page_jsons:
+                    content_json = _merge_vlm_json_pages(page_jsons)
+                    logger.info(f"VLM JSON extraction: merged {len(page_jsons)} pages into {len(content_json)} chars")
+                else:
+                    logger.warning("VLM JSON extraction: no page responses collected")
+        except Exception as e:
+            logger.error(f"Failed to merge VLM JSON responses: {e}")
+        
+        # For backward compatibility, still generate markdown (but it will be empty/summary)
         raw_markdown = doc.export_to_markdown()
         content_markdown = _clean_vlm_markdown(raw_markdown)
 
         md_preview = content_markdown[:200].replace('\n', ' ') if content_markdown else "(empty)"
+        json_preview = content_json[:200] if content_json else "(none)"
         logger.info(
-            "VLM Pipeline: raw_md=%d chars, cleaned_md=%d chars, pages=%d, elements=%d, preview: %s...",
+            "VLM Pipeline: raw_md=%d chars, cleaned_md=%d chars, json=%d chars, pages=%d, elements=%d, md_preview: %s..., json_preview: %s...",
             len(raw_markdown) if raw_markdown else 0,
             len(content_markdown) if content_markdown else 0,
+            len(content_json) if content_json else 0,
             len(pages_detail),
             sum(len(p.elements) for p in pages_detail),
             md_preview,
+            json_preview,
         )
 
         # Degenerate VLM output: the granite-docling model sometimes classifies
@@ -929,6 +1185,7 @@ def _convert_sync(
             pages=pages_detail,
             skipped_items=skipped,
             document_json=document_json,
+            content_json=content_json,
         )
 
     if not pages_detail and page_count > 0:

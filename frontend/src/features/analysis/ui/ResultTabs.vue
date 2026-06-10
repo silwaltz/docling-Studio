@@ -104,6 +104,31 @@
         <pre class="raw-content" data-e2e="raw-content">{{ pageMarkdown }}</pre>
       </div>
 
+      <!-- JSON DATA -->
+      <div v-else-if="activeTab === 'json'" class="json-view" data-e2e="json-view">
+        <div v-if="!jsonData" class="json-empty">
+          <span>No JSON data available. Use VLM pipeline to extract structured data.</span>
+        </div>
+        <template v-else>
+          <button class="copy-btn copy-btn-block" :title="'Copy JSON'" @click="copyJson">
+            <svg v-if="!copiedJson" viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+              <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+              <path
+                d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"
+              />
+            </svg>
+            <svg v-else viewBox="0 0 20 20" fill="currentColor" class="copy-icon copied">
+              <path
+                fill-rule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+          <pre class="raw-content json-content" data-e2e="json-content">{{ formattedJson }}</pre>
+        </template>
+      </div>
+
       <!-- IMAGES -->
       <ImageGallery v-else-if="activeTab === 'images'" :pages="currentPageAsArray" />
     </div>
@@ -222,6 +247,7 @@ const activeTab = ref('elements')
 const tabs = computed(() => [
   { id: 'elements', label: t('results.elements') },
   { id: 'markdown', label: t('results.markdown') },
+  { id: 'json', label: 'JSON Data' },
   { id: 'images', label: t('results.images') },
 ])
 
@@ -306,8 +332,25 @@ function formatElement(el: PageElement) {
   }
 }
 
+/** JSON data from VLM extraction */
+const jsonData = computed(() => {
+  return store.currentAnalysis?.contentJson || null
+})
+
+/** Formatted JSON for display */
+const formattedJson = computed(() => {
+  if (!jsonData.value) return ''
+  try {
+    const parsed = JSON.parse(jsonData.value)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return jsonData.value
+  }
+})
+
 // --- Copy to clipboard ---
 const copiedMarkdown = ref(false)
+const copiedJson = ref(false)
 const copiedElements: Record<number, boolean> = reactive({})
 
 async function copyMarkdown() {
@@ -316,6 +359,18 @@ async function copyMarkdown() {
     copiedMarkdown.value = true
     setTimeout(() => {
       copiedMarkdown.value = false
+    }, 1500)
+  } catch {
+    /* clipboard not available */
+  }
+}
+
+async function copyJson() {
+  try {
+    await navigator.clipboard.writeText(formattedJson.value)
+    copiedJson.value = true
+    setTimeout(() => {
+      copiedJson.value = false
     }, 1500)
   } catch {
     /* clipboard not available */

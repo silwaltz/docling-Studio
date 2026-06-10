@@ -283,12 +283,29 @@ class AnalysisService:
                 )
                 return None
 
+            conversion_task = asyncio.create_task(
+                self._converter.convert(file_path, options, page_range=(start, end))
+            )
             try:
                 batch_result = await asyncio.wait_for(
-                    self._converter.convert(file_path, options, page_range=(start, end)),
+                    conversion_task,
                     timeout=self._conversion_timeout,
                 )
+            except asyncio.TimeoutError:
+                conversion_task.cancel()
+                try:
+                    await conversion_task
+                except asyncio.CancelledError:
+                    pass
+                raise RuntimeError(
+                    f"Batch {batch_idx + 1}/{num_batches} (pages {start}-{end}) timed out after {self._conversion_timeout}s"
+                )
             except Exception as exc:
+                conversion_task.cancel()
+                try:
+                    await conversion_task
+                except asyncio.CancelledError:
+                    pass
                 raise RuntimeError(
                     f"Batch {batch_idx + 1}/{num_batches} (pages {start}-{end}) failed: {exc}"
                 ) from exc
@@ -453,6 +470,7 @@ class AnalysisService:
             pages_json=pages_json,
             document_json=result.document_json,
             chunks_json=chunks_json,
+            content_json=result.content_json,
         )
 
         # Record a frozen (analysis, chunks_snapshot) pair in the

@@ -103,6 +103,7 @@ services:
       RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-100}
       MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-50}
       BATCH_PAGE_SIZE: ${BATCH_PAGE_SIZE:-10}
+      CONVERSION_TIMEOUT: ${CONVERSION_TIMEOUT:-3600}
       OPENSEARCH_URL: http://opensearch:9200
       EMBEDDING_URL: http://embedding:8001
       NEO4J_URI: bolt://neo4j:7687
@@ -116,6 +117,14 @@ services:
       CHAT_ENABLED: ${CHAT_ENABLED:-true}
       CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # VLM backend settings
+      VLM_BACKEND: ${VLM_BACKEND:-ollama}
+      VLM_FALLBACK_MODEL: ${VLM_FALLBACK_MODEL:-GRANITEDOCLING_TRANSFORMERS}
+      VLM_OLLAMA_MODEL: ${VLM_OLLAMA_MODEL:-qwen3-vl:8b}
+      VLM_OLLAMA_PROMPT: '${VLM_OLLAMA_PROMPT:-Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.}'
+      VLM_OLLAMA_MAX_TOKENS: ${VLM_OLLAMA_MAX_TOKENS:-131072}
+      VLM_REMOTE_TIMEOUT: ${VLM_REMOTE_TIMEOUT:-3600}
+      VLM_IMAGE_SCALE: ${VLM_IMAGE_SCALE:-2.0}
     command:
       ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     depends_on:
