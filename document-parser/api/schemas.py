@@ -173,6 +173,15 @@ class PipelineOptionsRequest(BaseModel):
         validation_alias=AliasChoices("vlm_image_scale", "vlmImageScale"),
         description="VLM page-image render scale (0 = server default). Only used with force_vlm_pipeline.",
     )
+    vlm_output_mode: str = Field(
+        default="json",
+        validation_alias=AliasChoices("vlm_output_mode", "vlmOutputMode"),
+        description=(
+            "VLM output shape when force_vlm_pipeline is True: 'json' "
+            "(extract four canonical sections as structured JSON, default) "
+            "or 'markdown' (extract everything, preserve structure as markdown)."
+        ),
+    )
 
     @field_validator("preprocess_pdf_dpi")
     @classmethod
@@ -193,6 +202,13 @@ class PipelineOptionsRequest(BaseModel):
     def validate_vlm_image_scale(cls, v: float) -> float:
         if v < 0 or v > 10:
             raise ValueError("vlm_image_scale must be between 0 and 10")
+        return v
+
+    @field_validator("vlm_output_mode")
+    @classmethod
+    def validate_vlm_output_mode(cls, v: str) -> str:
+        if v not in ("json", "markdown"):
+            raise ValueError("vlm_output_mode must be 'json' or 'markdown'")
         return v
 
     @field_validator("table_mode")

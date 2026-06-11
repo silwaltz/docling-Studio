@@ -14,6 +14,7 @@ Backend team owns adapter implementations and external service integrations.
 - **Settings**: All config via `settings.py` (env vars with defaults)
 - **External services**: Docling Serve, Ollama, Neo4j, OpenSearch
 - **VLM backends**: Two VLM converter variants - `granite` (in-process transformers) and `ollama` (remote API via qwen3-vl:8b)
+- **VLM output modes** (Ollama only, selected by `options.vlm_output_mode`): `json` (default, four canonical sections) or `markdown` (extract everything, preserve structure). Each mode has its own prompt (`vlm_ollama_prompt` / `vlm_ollama_markdown_prompt`) and its own per-page response bucket in the VLM HTTP patch.
 - **Error handling**: Catch external errors, translate to domain exceptions
 - **Timeouts**: Configure timeouts for all external HTTP calls
 - **Retries**: Implement retry logic for transient failures

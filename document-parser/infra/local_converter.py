@@ -38,16 +38,19 @@ def _apply_vlm_debug_patch():
     """Apply minimal logging patch to VLM engine to debug qwen3-vl."""
     try:
         import time
-        
+
         # Page counter for timing logs (reset per document)
         page_counter = {'current': 0}
-        # Storage for per-page JSON responses
-        page_responses = {'jsons': []}
-        
+        # Storage for per-page responses. Two parallel lists — `jsons` for
+        # the legacy structured-JSON mode, `markdowns` for the new
+        # structure-preserving markdown mode (set by the caller before the
+        # run). The caller picks which list to consume in `_convert_sync`.
+        page_responses = {'jsons': [], 'markdowns': []}
+
         # Patch at the lowest level - the actual HTTP request
         import requests
         original_post = requests.post
-        
+
         def logged_post(url, *args, **kwargs):
             result = original_post(url, *args, **kwargs)
             if 'chat/completions' in str(url):
@@ -58,10 +61,10 @@ def _apply_vlm_debug_patch():
                         content = msg.get('content', '')
                         reasoning = msg.get('reasoning', '')
                         _patch_logger.info(f"🔧 RAW Ollama response: content_len={len(content)}, reasoning_len={len(reasoning)}")
-                        
-                        # Determine the actual response text (for JSON collection)
+
+                        # Determine the actual response text (for collection)
                         actual_response = content
-                        
+
                         # FIX: qwen3-vl puts output in 'reasoning' field when doing CoT
                         # If content is empty but reasoning has data, use reasoning as content
                         if not content and reasoning:
@@ -81,47 +84,61 @@ def _apply_vlm_debug_patch():
                             _patch_logger.info(f"🔧 Content preview: {content[:200]}")
                         else:
                             _patch_logger.warning(f"🔧 CONTENT IS EMPTY!")
-                        
-                        # Store the actual response for JSON merging
+
+                        # Store the actual response. The caller decides which
+                        # bucket (json vs markdown) is the live one for the
+                        # current run by setting `page_responses['mode']`
+                        # before invoking the converter. We mirror into both
+                        # for safety, then `_convert_sync` picks the right
+                        # list — keeps this patch single-responsibility.
                         if actual_response:
-                            page_responses['jsons'].append(actual_response)
-                            _patch_logger.info(f"🔧 Stored JSON response ({len(actual_response)} chars)")
-                        
+                            mode = page_responses.get('mode', 'json')
+                            if mode == 'markdown':
+                                page_responses['markdowns'].append(actual_response)
+                                _patch_logger.info(
+                                    f"🔧 Stored markdown response ({len(actual_response)} chars)"
+                                )
+                            else:
+                                page_responses['jsons'].append(actual_response)
+                                _patch_logger.info(
+                                    f"🔧 Stored JSON response ({len(actual_response)} chars)"
+                                )
+
                         if reasoning and content:  # Only log if both exist
                             _patch_logger.info(f"🔧 Reasoning preview: {reasoning[:200]}")
                 except Exception as e:
                     _patch_logger.error(f"🔧 Error parsing/fixing response: {e}")
             return result
-        
+
         requests.post = logged_post
-        
+
         # Also patch the API request function to log responses with timing
         import docling.utils.api_image_request as api_module
         original_api_request = api_module.api_image_request
-        
+
         def logged_api_request(image, prompt, url, timeout=20, headers=None, **params):
             page_counter['current'] += 1
             page_num = page_counter['current']
-            
+
             _patch_logger.info(f"🔧 VLM processing page {page_num}...")
             start_time = time.time()
-            
+
             result_text, num_tokens, stop_reason = original_api_request(image, prompt, url, timeout, headers, **params)
-            
+
             elapsed = time.time() - start_time
             _patch_logger.info(f"📄 Page {page_num} processed in {elapsed:.1f}s (tokens: {num_tokens}, chars: {len(result_text)})")
-            
-            # JSON response is already stored in logged_post function
+
+            # Response is already stored in logged_post function
             if result_text:
                 _patch_logger.info(f"🔧 Response preview: {result_text[:200]}")
             else:
                 _patch_logger.warning(f"🔧 EMPTY RESPONSE from API!")
             return result_text, num_tokens, stop_reason
-        
+
         # Store references for reset and retrieval
         logged_api_request._page_counter = page_counter
         logged_api_request._page_responses = page_responses
-        
+
         api_module.api_image_request = logged_api_request
         
         # Also patch streaming version
@@ -417,19 +434,45 @@ def _process_content_item(
 
 
 def _build_ollama_vlm_converter(options: ConversionOptions | None = None) -> DoclingConverter:
-    """Build Ollama VLM converter using remote API."""
+    """Build Ollama VLM converter using remote API.
+
+    The prompt and downstream extraction strategy depend on
+    ``options.vlm_output_mode``:
+
+    - ``"json"`` (default) — use the canonical four-section JSON prompt and
+      let ``_convert_sync`` merge per-page JSON responses into a single
+      ``content_json``. ``content_markdown`` ends up as the (cleaned) raw
+      response, which is mostly the JSON pretty-printed.
+    - ``"markdown"`` — use the structure-preserving markdown prompt. The
+      per-page responses are collected as markdown fragments and joined
+      into ``content_markdown``; no ``content_json`` is produced.
+    """
     from docling.datamodel.pipeline_options_vlm_model import ApiVlmOptions, ResponseFormat
-    
+
     try:
         image_scale = settings.vlm_image_scale
         if options is not None and options.vlm_image_scale > 0:
             image_scale = options.vlm_image_scale
-        
+
+        output_mode = (options.vlm_output_mode if options is not None else "json") or "json"
+        if output_mode not in ("json", "markdown"):
+            logger.warning("Unknown vlm_output_mode=%r, falling back to 'json'", output_mode)
+            output_mode = "json"
+
+        prompt = (
+            settings.vlm_ollama_markdown_prompt
+            if output_mode == "markdown"
+            else settings.vlm_ollama_prompt
+        )
+
         ollama_url = f"{settings.ollama_host.rstrip('/')}/v1/chat/completions"
-        logger.info(f"Building Ollama VLM converter (model: {settings.vlm_ollama_model}, scale: {image_scale})")
+        logger.info(
+            "Building Ollama VLM converter (model: %s, scale: %s, mode: %s)",
+            settings.vlm_ollama_model, image_scale, output_mode,
+        )
         logger.info(f"Ollama URL: {ollama_url}")
         logger.info(f"Max tokens: {settings.vlm_ollama_max_tokens}, Timeout: {settings.vlm_remote_timeout}s")
-        
+
         vlm_options = ApiVlmOptions(
             url=ollama_url,
             params={
@@ -437,7 +480,7 @@ def _build_ollama_vlm_converter(options: ConversionOptions | None = None) -> Doc
                 "max_tokens": settings.vlm_ollama_max_tokens,
                 "num_ctx": settings.vlm_ollama_max_tokens,  # Context window size
             },
-            prompt=settings.vlm_ollama_prompt,
+            prompt=prompt,
             timeout=settings.vlm_remote_timeout,
             scale=image_scale,
             temperature=0.0,
@@ -519,6 +562,40 @@ def _build_vlm_converter(options: ConversionOptions | None = None) -> DoclingCon
     except Exception as exc:
         logger.warning("Failed to build VLM converter: %s", exc)
         raise
+
+
+def _set_vlm_response_mode(output_mode: str) -> None:
+    """Tell the VLM HTTP patch which bucket to collect per-page responses in.
+
+    The VLM monkey-patch applied at import time maintains two parallel
+    response lists (``jsons`` and ``markdowns``). This helper is called by
+    ``_convert_sync`` before each run to:
+
+    1. Reset both lists so leftover responses from a previous document
+       don't leak into the new one.
+    2. Set ``mode`` so ``logged_post`` knows which list to append to.
+    """
+    try:
+        import docling.utils.api_image_request as api_module
+        if hasattr(api_module.api_image_request, "_page_responses"):
+            bucket = api_module.api_image_request._page_responses
+            bucket["jsons"] = []
+            bucket["markdowns"] = []
+            bucket["mode"] = "markdown" if output_mode == "markdown" else "json"
+    except Exception as exc:
+        logger.warning("Failed to set VLM response mode: %s", exc)
+
+
+def _get_vlm_page_responses(output_mode: str) -> list[str]:
+    """Read back the per-page responses collected by the VLM patch."""
+    try:
+        import docling.utils.api_image_request as api_module
+        if hasattr(api_module.api_image_request, "_page_responses"):
+            bucket = api_module.api_image_request._page_responses
+            return list(bucket["markdowns"] if output_mode == "markdown" else bucket["jsons"])
+    except Exception as exc:
+        logger.warning("Failed to read VLM page responses: %s", exc)
+    return []
 
 
 def _merge_vlm_json_pages(page_jsons: list[str]) -> str:
@@ -1079,20 +1156,20 @@ def _convert_sync(
         )
     try:
         conv = _select_converter(options)
-        
-        # Reset VLM page counter and responses for this document
+
+        # Reset VLM page counter and responses for this document. The
+        # output_mode also tells the HTTP-level patch which bucket to fill
+        # (json vs markdown) for the duration of this run.
         if options.force_vlm_pipeline:
             try:
                 import docling.utils.api_image_request as api_module
                 if hasattr(api_module.api_image_request, '_page_counter'):
                     api_module.api_image_request._page_counter['current'] = 0
                     logger.info("VLM page counter reset for new document")
-                if hasattr(api_module.api_image_request, '_page_responses'):
-                    api_module.api_image_request._page_responses['jsons'] = []
-                    logger.info("VLM page responses cleared for new document")
             except Exception as e:
-                logger.warning(f"Could not reset VLM counters: {e}")
-        
+                logger.warning(f"Could not reset VLM counter: {e}")
+            _set_vlm_response_mode(options.vlm_output_mode or "json")
+
         kwargs: dict = {}
         if settings.max_page_count > 0:
             kwargs["max_num_pages"] = settings.max_page_count
@@ -1114,25 +1191,53 @@ def _convert_sync(
     page_count = len(doc.pages)
     pages_detail, skipped = _extract_pages_detail(result)
 
-    # VLM Pipeline — Extract JSON data from per-page responses and merge
+    # VLM Pipeline — process per-page responses based on output_mode
     if options.force_vlm_pipeline:
-        # Retrieve per-page JSON responses from the monkey patch
-        content_json = None
-        try:
-            import docling.utils.api_image_request as api_module
-            if hasattr(api_module.api_image_request, '_page_responses'):
-                page_jsons = api_module.api_image_request._page_responses['jsons']
-                if page_jsons:
-                    content_json = _merge_vlm_json_pages(page_jsons)
-                    logger.info(f"VLM JSON extraction: merged {len(page_jsons)} pages into {len(content_json)} chars")
-                else:
-                    logger.warning("VLM JSON extraction: no page responses collected")
-        except Exception as e:
-            logger.error(f"Failed to merge VLM JSON responses: {e}")
-        
-        # For backward compatibility, still generate markdown (but it will be empty/summary)
-        raw_markdown = doc.export_to_markdown()
-        content_markdown = _clean_vlm_markdown(raw_markdown)
+        output_mode = options.vlm_output_mode or "json"
+        backend = options.vlm_backend or settings.vlm_backend or "granite"
+
+        if backend == "ollama" and output_mode == "markdown":
+            # Markdown mode (Ollama): the model's per-page responses are
+            # the source of truth for the document. Concatenate them and
+            # use that as `content_markdown`.
+            page_markdowns = _get_vlm_page_responses("markdown")
+            if page_markdowns:
+                joined = "\n\n---\n\n".join(p.strip() for p in page_markdowns if p.strip())
+                content_markdown = _clean_vlm_markdown(joined)
+                logger.info(
+                    "VLM markdown extraction: joined %d pages into %d chars",
+                    len(page_markdowns), len(content_markdown),
+                )
+            else:
+                logger.warning("VLM markdown extraction: no page responses collected")
+                content_markdown = ""
+            content_json = None
+            raw_markdown = content_markdown  # already the canonical output
+        elif backend == "ollama":
+            # JSON mode (Ollama, default / legacy): merge per-page JSON
+            # into one dedup'd JSON document. Markdown is the doc's
+            # export, which will be mostly the JSON pretty-printed — kept
+            # for backward compatibility.
+            content_json = None
+            page_jsons = _get_vlm_page_responses("json")
+            if page_jsons:
+                content_json = _merge_vlm_json_pages(page_jsons)
+                logger.info(
+                    "VLM JSON extraction: merged %d pages into %d chars",
+                    len(page_jsons), len(content_json),
+                )
+            else:
+                logger.warning("VLM JSON extraction: no page responses collected")
+            raw_markdown = doc.export_to_markdown()
+            content_markdown = _clean_vlm_markdown(raw_markdown)
+        else:
+            # Granite (or any non-Ollama VLM backend): no per-page HTTP
+            # collector. Use the doc's markdown export directly, and
+            # leave content_json empty. The `vlm_output_mode` option
+            # only has meaning for the Ollama backend.
+            content_json = None
+            raw_markdown = doc.export_to_markdown()
+            content_markdown = _clean_vlm_markdown(raw_markdown)
 
         md_preview = content_markdown[:200].replace('\n', ' ') if content_markdown else "(empty)"
         json_preview = content_json[:200] if content_json else "(none)"

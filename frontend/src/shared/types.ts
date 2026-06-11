@@ -54,9 +54,10 @@ export interface PipelineOptions {
   generate_page_images?: boolean
   images_scale?: number
   force_vlm_pipeline?: boolean
-  preprocess_pdf_dpi?: number  // DPI for PDF preprocessing (0 = disabled, 300 = recommended)
-  vlm_backend?: string  // VLM backend: 'ollama' or 'granite' (empty = server default). Only used with force_vlm_pipeline.
-  vlm_image_scale?: number  // VLM page render scale (0 = server default). Only used with force_vlm_pipeline.
+  preprocess_pdf_dpi?: number // DPI for PDF preprocessing (0 = disabled, 300 = recommended)
+  vlm_backend?: string // VLM backend: 'ollama' or 'granite' (empty = server default). Only used with force_vlm_pipeline.
+  vlm_image_scale?: number // VLM page render scale (0 = server default). Only used with force_vlm_pipeline.
+  vlm_output_mode?: 'json' | 'markdown' // VLM output shape (Ollama only): 'json' (default) or 'markdown'. Ignored by granite.
 }
 
 export type AnalysisStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

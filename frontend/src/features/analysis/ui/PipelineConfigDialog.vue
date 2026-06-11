@@ -19,7 +19,8 @@
                 <span class="toggle-text">{{ t('config.forceVlmPipeline') }}</span>
               </label>
               <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.forceVlmPipelineHint') }}</span>?
+                <span class="config-tooltip">{{ t('config.forceVlmPipelineHint') }}</span
+                >?
               </span>
             </div>
           </div>
@@ -35,7 +36,8 @@
                 <span class="toggle-text">{{ t('config.ocr') }}</span>
               </label>
               <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.ocrHint') }}</span>?
+                <span class="config-tooltip">{{ t('config.ocrHint') }}</span
+                >?
               </span>
             </div>
 
@@ -47,7 +49,8 @@
                   <span class="toggle-text">{{ t('config.forceFullPageOcr') }}</span>
                 </label>
                 <span class="config-hint">
-                  <span class="config-tooltip">{{ t('config.forceFullPageOcrHint') }}</span>?
+                  <span class="config-tooltip">{{ t('config.forceFullPageOcrHint') }}</span
+                  >?
                 </span>
               </div>
             </div>
@@ -59,7 +62,8 @@
                 <span class="toggle-text">{{ t('config.tableStructure') }}</span>
               </label>
               <span class="config-hint">
-                <span class="config-tooltip">{{ t('config.tableStructureHint') }}</span>?
+                <span class="config-tooltip">{{ t('config.tableStructureHint') }}</span
+                >?
               </span>
             </div>
 
@@ -83,6 +87,15 @@
                 <option value="ollama">{{ t('config.vlmBackendOllama') }}</option>
               </select>
               <span class="config-input-hint">{{ t('config.vlmBackendHint') }}</span>
+            </div>
+
+            <div class="config-sub-option" v-if="local.vlm_backend === 'ollama'">
+              <label class="config-label-sm">{{ t('config.vlmOutputMode') }}</label>
+              <select class="config-select" v-model="local.vlm_output_mode">
+                <option value="json">{{ t('config.vlmOutputModeJson') }}</option>
+                <option value="markdown">{{ t('config.vlmOutputModeMarkdown') }}</option>
+              </select>
+              <span class="config-input-hint">{{ t('config.vlmOutputModeHint') }}</span>
             </div>
 
             <div class="config-sub-option">
@@ -128,6 +141,7 @@ const DEFAULT_OPTIONS: PipelineOptions = {
   force_vlm_pipeline: false,
   vlm_backend: '',
   vlm_image_scale: 4,
+  vlm_output_mode: 'json',
 }
 
 const local = reactive<PipelineOptions>({ ...DEFAULT_OPTIONS })

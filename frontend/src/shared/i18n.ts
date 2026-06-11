@@ -153,13 +153,19 @@ const messages: Messages = {
     'config.tableModeFast': 'Rapide',
     'config.forceVlmPipeline': 'Pipeline VLM',
     'config.forceVlmPipelineHint':
-      'Force l\'utilisation du Pipeline VLM de Docling au lieu du pipeline standard. Utilise un modèle Vision-Language pour la conversion complète du document.',
+      "Force l'utilisation du Pipeline VLM de Docling au lieu du pipeline standard. Utilise un modèle Vision-Language pour la conversion complète du document.",
     'config.standardOptions': 'Options du pipeline standard',
     'config.vlmOptions': 'Options du pipeline VLM',
     'config.vlmBackend': 'Moteur VLM',
-    'config.vlmBackendHint': 'Sélectionne le moteur VLM : Granite (local, transformers) ou Qwen3-VL (Ollama, distant).',
+    'config.vlmBackendHint':
+      'Sélectionne le moteur VLM : Granite (local, transformers) ou Qwen3-VL (Ollama, distant).',
     'config.vlmBackendGranite': 'Granite (local)',
     'config.vlmBackendOllama': 'Qwen3-VL (Ollama)',
+    'config.vlmOutputMode': 'Format de sortie',
+    'config.vlmOutputModeHint':
+      'Choisit ce que le VLM doit produire. "JSON structuré" extrait les 4 sections canoniques au format JSON. "Markdown complet" transcrit l\'intégralité du document en Markdown en préservant la structure.',
+    'config.vlmOutputModeJson': 'JSON structuré',
+    'config.vlmOutputModeMarkdown': 'Markdown complet',
     'config.vlmImageScale': 'Résolution',
     'config.vlmImageScaleHint':
       'Échelle de rendu de la page transmise au modèle VLM. Une résolution plus élevée permet de lire davantage de petit texte, mais ralentit le traitement.',
@@ -168,7 +174,8 @@ const messages: Messages = {
     'config.vlmScaleHigh': 'Élevé (4x, recommandé)',
     'config.vlmScaleMax': 'Maximum (5x)',
     'config.preprocessPdfDpi': 'Prétraitement PDF (DPI)',
-    'config.preprocessPdfDpiHint': 'DPI pour le prétraitement (0 = désactivé, 300 = recommandé pour les documents scannés)',
+    'config.preprocessPdfDpiHint':
+      'DPI pour le prétraitement (0 = désactivé, 300 = recommandé pour les documents scannés)',
     'config.enrichment': 'Enrichissement',
     'config.codeEnrichment': 'Code',
     'config.codeEnrichmentHint':
@@ -246,7 +253,7 @@ const messages: Messages = {
     'newAnalysis.title': 'Nouvelle analyse',
     'newAnalysis.running': 'Analyse en cours…',
     'newAnalysis.cancel': 'Annuler',
-    'newAnalysis.run': 'Lancer l\'analyse',
+    'newAnalysis.run': "Lancer l'analyse",
 
     // Chunking
     'studio.prepare': 'Préparer',
@@ -420,8 +427,10 @@ const messages: Messages = {
     'ask.send': 'Envoyer',
     'ask.inputPlaceholder': 'Posez une question sur ce document… (Entrée pour envoyer)',
     'ask.emptyTitle': 'Posez une question',
-    'ask.emptySub': 'Le document analysé est utilisé comme contexte. Vous pouvez demander des résumés, des explications ou des suggestions de modification.',
-    'ask.suggestion1': 'Extrait toutes les adresses, noms de sociétés, informations de transport et descriptions des marchandises au format JSON.',
+    'ask.emptySub':
+      'Le document analysé est utilisé comme contexte. Vous pouvez demander des résumés, des explications ou des suggestions de modification.',
+    'ask.suggestion1':
+      'Extrait toutes les adresses, noms de sociétés, informations de transport et descriptions des marchandises au format JSON.',
     'ask.downloadJson': 'Télécharger JSON',
     // unused legacy key kept for compat:
     'ask.modelHint': 'Mod\u00e8le Ollama. Laisser vide pour le d\u00e9faut serveur.',
@@ -829,13 +838,19 @@ const messages: Messages = {
     'config.tableModeFast': 'Fast',
     'config.forceVlmPipeline': 'VLM Pipeline',
     'config.forceVlmPipelineHint':
-      'Force use of Docling\'s VLM Pipeline instead of the standard pipeline. Uses a Vision-Language model for full document conversion.',
+      "Force use of Docling's VLM Pipeline instead of the standard pipeline. Uses a Vision-Language model for full document conversion.",
     'config.standardOptions': 'Standard pipeline options',
     'config.vlmOptions': 'VLM pipeline options',
     'config.vlmBackend': 'VLM Engine',
-    'config.vlmBackendHint': 'Select VLM engine: Granite (local, transformers) or Qwen3-VL (Ollama, remote).',
+    'config.vlmBackendHint':
+      'Select VLM engine: Granite (local, transformers) or Qwen3-VL (Ollama, remote).',
     'config.vlmBackendGranite': 'Granite (local)',
     'config.vlmBackendOllama': 'Qwen3-VL (Ollama)',
+    'config.vlmOutputMode': 'Output mode',
+    'config.vlmOutputModeHint':
+      'What the VLM should produce. "Structured JSON" extracts the 4 canonical sections as JSON. "Full Markdown" transcribes the entire document as Markdown, preserving the structure.',
+    'config.vlmOutputModeJson': 'Structured JSON',
+    'config.vlmOutputModeMarkdown': 'Full Markdown',
     'config.vlmImageScale': 'Resolution',
     'config.vlmImageScaleHint':
       'Page render scale fed to the VLM model. Higher resolution lets it read more small text but is slower.',
@@ -844,7 +859,8 @@ const messages: Messages = {
     'config.vlmScaleHigh': 'High (4x, recommended)',
     'config.vlmScaleMax': 'Maximum (5x)',
     'config.preprocessPdfDpi': 'PDF Preprocessing (DPI)',
-    'config.preprocessPdfDpiHint': 'DPI for preprocessing (0 = disabled, 300 = recommended for scanned docs)',
+    'config.preprocessPdfDpiHint':
+      'DPI for preprocessing (0 = disabled, 300 = recommended for scanned docs)',
     'config.enrichment': 'Enrichment',
     'config.codeEnrichment': 'Code',
     'config.codeEnrichmentHint':
@@ -1081,7 +1097,8 @@ const messages: Messages = {
     'ask.questionPlaceholder': 'e.g. What are the supplier obligations?',
     'ask.modelConfig': 'Model (optional)',
     'ask.modelPlaceholder': 'gemma4:e4b-it-qat',
-    'ask.modelHint': 'Ollama model name. Leave empty to use the server default (filled in on load from /api/documents/ollama-status).',
+    'ask.modelHint':
+      'Ollama model name. Leave empty to use the server default (filled in on load from /api/documents/ollama-status).',
     'ask.run': 'Run',
     'ask.running': 'Reasoning…',
     'ask.answerLabel': 'Answer',
@@ -1092,8 +1109,10 @@ const messages: Messages = {
     'ask.send': 'Send',
     'ask.inputPlaceholder': 'Ask a question about this document… (Enter to send)',
     'ask.emptyTitle': 'Ask about this document',
-    'ask.emptySub': 'The analysed document is used as context. Ask for summaries, explanations, or suggestions on what to change.',
-    'ask.suggestion1': 'Extract every distinct entity from this page and return a single JSON object. Use exactly these four key prefixes with a numeric suffix starting at 1 (Company Name1, Address1, Shipping Information1, Goods Description1, etc.): "Company Name<n>" = a company, bank, agency, or organization name; "Address<n>" = a postal or physical address (one line per key, multi-line addresses get multiple Address<n>); "Shipping Information<n>" = port, vessel, container, B/L, AWB, or routing info; "Goods Description<n>" = a description of goods, items, or cargo. Rules: Output ONLY the JSON object - no markdown, no code fences, no commentary. Every value MUST be a plain string (no arrays, no nested objects). Include every distinct entity you find; do not deduplicate. If a section has no entries on this page, omit its keys entirely. Replace newlines inside values with a single space.',
+    'ask.emptySub':
+      'The analysed document is used as context. Ask for summaries, explanations, or suggestions on what to change.',
+    'ask.suggestion1':
+      'Extract every distinct entity from this page and return a single JSON object. Use exactly these four key prefixes with a numeric suffix starting at 1 (Company Name1, Address1, Shipping Information1, Goods Description1, etc.): "Company Name<n>" = a company, bank, agency, or organization name; "Address<n>" = a postal or physical address (one line per key, multi-line addresses get multiple Address<n>); "Shipping Information<n>" = port, vessel, container, B/L, AWB, or routing info; "Goods Description<n>" = a description of goods, items, or cargo. Rules: Output ONLY the JSON object - no markdown, no code fences, no commentary. Every value MUST be a plain string (no arrays, no nested objects). Include every distinct entity you find; do not deduplicate. If a section has no entries on this page, omit its keys entirely. Replace newlines inside values with a single space.',
     'ask.downloadJson': 'Download JSON',
 
     // Doc workspace (#216, #218 — switcher refactored in #263, modes renamed

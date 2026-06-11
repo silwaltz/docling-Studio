@@ -118,6 +118,14 @@ class ConversionOptions:
     # more (small) text but is slower / heavier. 0 = use server default
     # (settings.vlm_image_scale). Only used when force_vlm_pipeline is True.
     vlm_image_scale: float = 0.0
+    # What the VLM is asked to produce when force_vlm_pipeline is True.
+    # "json"     — ask the model to extract the four canonical sections as
+    #              a structured JSON object (default; preserves current
+    #              behaviour).
+    # "markdown" — ask the model to extract everything and preserve the
+    #              document structure as markdown. The full markdown goes
+    #              into content_markdown; no content_json is produced.
+    vlm_output_mode: str = "json"
 
     def is_default(self) -> bool:
         """Return True if all options match their defaults."""

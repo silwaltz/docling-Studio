@@ -82,6 +82,22 @@ class Settings:
         Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.
         """
     )
+    # Ollama VLM prompt used when vlm_output_mode="markdown". Asks the model
+    # to extract everything and preserve the document structure as markdown
+    # (no schema constraint). Output is consumed by the rest of the pipeline
+    # as `content_markdown` — i.e. it feeds the Ask LLM (gemma4:e4b) the
+    # same way the standard pipeline's markdown does.
+    vlm_ollama_markdown_prompt: str = (
+        """
+        You are an OCR + document understanding engine. Read the page image carefully and transcribe its content as clean Markdown.
+
+        Rules:
+        - Preserve the document's structure: use `#`/`##`/`###` headings, bullet lists, numbered lists, and tables (as GFM tables) where the layout calls for them.
+        - Include every piece of readable text on the page — do not summarize, do not omit sections, do not skip headers, footers, page numbers, table cells, or annotations.
+        - If a region is unreadable or blank, output nothing for that region (do not guess).
+        - Output Markdown only. Do not wrap it in a code fence. Do not add commentary before or after.
+        """
+    )
     # Max tokens for Ollama VLM output (qwen3-vl:8b supports up to 262k context)
     # 131072 tokens (128k) ≈ 96,000 words, enough for very dense multi-page documents
     # Higher resolution images need more tokens to describe
@@ -152,6 +168,10 @@ class Settings:
             errors.append(f"vlm_remote_timeout must be > 0 (got {self.vlm_remote_timeout})")
         if self.vlm_ollama_max_tokens <= 0:
             errors.append(f"vlm_ollama_max_tokens must be > 0 (got {self.vlm_ollama_max_tokens})")
+        if not self.vlm_ollama_prompt.strip():
+            errors.append("vlm_ollama_prompt must not be empty")
+        if not self.vlm_ollama_markdown_prompt.strip():
+            errors.append("vlm_ollama_markdown_prompt must not be empty")
         if self.default_table_mode not in ("accurate", "fast"):
             errors.append(
                 f"default_table_mode must be 'accurate' or 'fast' (got '{self.default_table_mode}')"
@@ -227,6 +247,20 @@ class Settings:
                 (
                     """
                     Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.
+                    """
+                )
+            ),
+            vlm_ollama_markdown_prompt=os.environ.get(
+                "VLM_OLLAMA_MARKDOWN_PROMPT",
+                (
+                    """
+                    You are an OCR + document understanding engine. Read the page image carefully and transcribe its content as clean Markdown.
+
+                    Rules:
+                    - Preserve the document's structure: use `#`/`##`/`###` headings, bullet lists, numbered lists, and tables (as GFM tables) where the layout calls for them.
+                    - Include every piece of readable text on the page — do not summarize, do not omit sections, do not skip headers, footers, page numbers, table cells, or annotations.
+                    - If a region is unreadable or blank, output nothing for that region (do not guess).
+                    - Output Markdown only. Do not wrap it in a code fence. Do not add commentary before or after.
                     """
                 )
             ),
