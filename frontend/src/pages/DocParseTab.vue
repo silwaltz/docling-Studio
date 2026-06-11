@@ -446,7 +446,21 @@ watch(
   () => documentStore.workspaceActiveAnalysis?.id,
   (newId, oldId) => {
     if (newId && newId !== oldId) {
+      // Wipe view state that points into the old version's content so
+      // nothing leaks across the swap. Order matters: reset `currentPage`
+      // *before* the :key bump on PagePreviewWithOverlay so the freshly
+      // mounted preview loads page 1's image instead of an out-of-range
+      // page that 404s. Also clear filter, hover, click, and any linked
+      // chunk reference so the Chunk / ElementProperties panels don't
+      // show stale data from the previous version.
       selectedNodeRef.value = null
+      filter.value = ''
+      currentPage.value = 1
+      // Sync the analysis store too — the JSON tab reads contentJson
+      // from analysisStore.currentAnalysis (not from workspaceActiveAnalysis),
+      // so without this the JSON view would keep showing the old version's
+      // JSON even after History restore completes.
+      analysisStore.select(newId)
       loadTree()
     }
   },
