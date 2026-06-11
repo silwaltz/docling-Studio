@@ -43,6 +43,13 @@
       >
         {{ t('parse.viewMarkdown') }}
       </button>
+      <button
+        class="parse-view-tab"
+        :class="{ active: activeView === 'json' }"
+        @click="activeView = 'json'"
+      >
+        {{ t('parse.viewJson') }}
+      </button>
     </div>
 
     <!-- Visual view -->
@@ -138,6 +145,53 @@
         <p>{{ t('parse.noAnalysis') }}</p>
       </div>
     </div>
+
+    <!-- JSON view (VLM extraction result) -->
+    <div v-else-if="activeView === 'json'" class="parse-json-view" data-e2e="json-view">
+      <div v-if="!jsonData" class="parse-state parse-state--empty">
+        <p>No JSON data available. Use VLM pipeline to extract structured data.</p>
+      </div>
+      <template v-else>
+        <div class="json-actions">
+          <button
+            class="copy-btn"
+            :title="t('results.copy')"
+            @click="copyJson"
+            data-e2e="json-copy"
+          >
+            <svg v-if="!copiedJson" viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+              <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+              <path
+                d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"
+              />
+            </svg>
+            <svg v-else viewBox="0 0 20 20" fill="currentColor" class="copy-icon copied">
+              <path
+                fill-rule="evenodd"
+                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+          <button
+            class="copy-btn"
+            :title="t('analysis.downloadJson')"
+            @click="downloadJson"
+            data-e2e="json-download"
+            aria-label="Download JSON"
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon" aria-hidden="true">
+              <path
+                fill-rule="evenodd"
+                d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                clip-rule="evenodd"
+              />
+            </svg>
+          </button>
+        </div>
+        <pre class="raw-content json-content" data-e2e="json-content">{{ formattedJson }}</pre>
+      </template>
+    </div>
   </div>
 </template>
 
@@ -177,7 +231,60 @@ const chunksStore = useChunksStore()
 const analysisStore = useAnalysisStore()
 
 const configDialogOpen = ref(false)
-const activeView = ref<'visual' | 'markdown'>('visual')
+const activeView = ref<'visual' | 'markdown' | 'json'>('visual')
+
+// --- JSON view (VLM extraction result) ---
+const jsonData = computed(() => {
+  return analysisStore.currentAnalysis?.contentJson || null
+})
+
+const formattedJson = computed(() => {
+  if (!jsonData.value) return ''
+  try {
+    const parsed = JSON.parse(jsonData.value)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return jsonData.value
+  }
+})
+
+const copiedJson = ref(false)
+
+async function copyJson(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(formattedJson.value)
+    copiedJson.value = true
+    setTimeout(() => {
+      copiedJson.value = false
+    }, 1500)
+  } catch {
+    /* clipboard not available */
+  }
+}
+
+/** Replace `\_` (gemma4's escape for spaces inside JSON string values) with a
+ *  plain space so the downloaded file matches what a human would type. */
+function cleanJsonForDownload(json: string): string {
+  return json.replace(/\\_/g, ' ')
+}
+
+function downloadJson(): void {
+  if (!jsonData.value) return
+  const cleaned = cleanJsonForDownload(jsonData.value)
+  let pretty = formattedJson.value
+  try {
+    pretty = JSON.stringify(JSON.parse(cleaned), null, 2)
+  } catch {
+    /* fall back to the raw formatted string if re-parse fails */
+  }
+  const blob = new Blob([pretty], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${props.docId}-extracted.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
 
 function onLaunchAnalysis(): void {
   if (analysisStore.running) return
@@ -421,6 +528,38 @@ function findPageOfRef(
   max-width: 900px;
   margin: 0 auto;
   width: 100%;
+}
+
+.parse-json-view {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  background: var(--bg-surface);
+  display: flex;
+  flex-direction: column;
+}
+
+.parse-json-view .json-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.parse-json-view .json-content {
+  flex: 1;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg-elevated);
+  padding: 12px 16px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  overflow: auto;
 }
 
 .parse-body {

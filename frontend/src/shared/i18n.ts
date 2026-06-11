@@ -472,6 +472,7 @@ const messages: Messages = {
     'parse.collapseAll': 'Tout replier',
     'parse.viewVisual': 'Visuel',
     'parse.viewMarkdown': 'Markdown',
+    'parse.viewJson': 'JSON',
 
     // Chunk view (#264) \u2014 chunks aligned to the page preview
     'chunk.strategy': 'Strat\u00e9gie',
@@ -1135,6 +1136,7 @@ const messages: Messages = {
     'parse.collapseAll': 'Collapse all',
     'parse.viewVisual': 'Visual',
     'parse.viewMarkdown': 'Markdown',
+    'parse.viewJson': 'JSON',
 
     // Chunk view (#264) — chunks aligned to the page preview
     'chunk.strategy': 'Strategy',
