@@ -47,7 +47,12 @@ _SYSTEM_PROMPT = (
     """
 )
 
-_MAX_CONTEXT_CHARS = 32_000  # ~8k tokens — keeps prompt within typical context windows
+_MAX_CONTEXT_CHARS = 96_000  # ~24k tokens of document text. The model context window
+# (see num_ctx in _stream_ollama) is the real ceiling; this cap is just to
+# keep the prompt small enough that the system + history + output budget all
+# fit comfortably. With 12+ pages of markdown (VLM pipeline) we routinely see
+# 20-25k chars, and 32k used to truncate mid-document and force the model
+# to "answer about the truncated end" — a classic cut-off symptom.
 
 
 class ChatMessage(BaseModel):
@@ -72,8 +77,17 @@ async def _stream_ollama(
         "messages": messages,
         "stream": True,
         "options": {
-            "num_ctx": 32768,
-            "num_predict": 4096,
+            # gemma4:e4b-it-qat supports up to 128k context. 96k leaves headroom
+            # for system prompt + history + output. The previous 32k value was
+            # the cutoff that caused 12-page docs to lose the tail of the
+            # markdown before the model even started answering.
+            "num_ctx": 96_000,
+            # The Ask prompt asks the model to enumerate every distinct entity
+            # across the document — a 12-page trade/shipping doc can produce
+            # thousands of entities, well past the old 4k output cap, so the
+            # model was getting truncated mid-answer. 16k ≈ ~12k words, enough
+            # for the biggest expected JSON output and most free-form Q&A.
+            "num_predict": 16_384,
         },
     }
 
@@ -112,7 +126,7 @@ async def _stream_ollama(
     except httpx.ConnectError:
         yield f"data: {json.dumps({'error': f'Cannot connect to Ollama at {ollama_host}. Is it running?'})}\n\n"
     except httpx.TimeoutException:
-        yield f"data: {json.dumps({'error': 'Ollama request timed out (120s).'})}\n\n"
+        yield f"data: {json.dumps({'error': 'Ollama request timed out (300s).'})}\n\n"
     except Exception as e:
         logger.exception("Unexpected error streaming from Ollama")
         yield f"data: {json.dumps({'error': str(e)})}\n\n"

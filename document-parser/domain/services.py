@@ -36,15 +36,112 @@ def extract_html_body(html: str) -> str:
     return match.group(1).strip() if match else html
 
 
+# Docling self_ref prefixes for the per-batch renumbering. Matches the
+# top-level lists in a DoclingDocument JSON payload.
+_SELF_REF_LISTS: tuple[str, ...] = ("texts", "tables", "pictures", "groups", "key_value_items", "form_items")
+
+
+def _renumber_batch_doc(doc: dict, offset_texts: int, offset_tables: int, offset_pictures: int, offset_groups: int) -> dict:
+    """Renumber ``self_ref`` and ``$ref`` pointers in a single batch's document.
+
+    Each batch's Docling document starts its ``texts``/``tables``/``pictures``/
+    ``groups`` arrays at index 0, so a naive concat produces duplicate
+    ``(self_ref)`` values across batches — which violates the Neo4j composite
+    uniqueness constraint ``(doc_id, self_ref)`` and crashes the graph write
+    (see infra/neo4j/schema.py). This function shifts each batch's indices by
+    the running totals from prior batches, and rewrites all internal ``$ref``
+    pointers (body.children, item.parent, item.children) to match.
+
+    Args:
+        doc: The batch's parsed DoclingDocument dict.
+        offset_texts / offset_tables / offset_pictures / offset_groups:
+            Running count of items already in the merged doc for each list.
+
+    Returns:
+        The same dict, mutated in place, with all refs renumbered.
+    """
+    offsets = {
+        "texts": offset_texts,
+        "tables": offset_tables,
+        "pictures": offset_pictures,
+        "groups": offset_groups,
+    }
+
+    def _shift_ref(ref: str) -> str:
+        """Shift a ``#/list/N`` reference by the appropriate offset. Leaves
+        ``#/body`` and any other non-list refs alone."""
+        if not isinstance(ref, str) or not ref.startswith("#/"):
+            return ref
+        rest = ref[2:]
+        parts = rest.split("/", 1)
+        if len(parts) != 2 or parts[0] not in offsets:
+            return ref
+        try:
+            idx = int(parts[1])
+        except ValueError:
+            return ref
+        return f"#/{parts[0]}/{idx + offsets[parts[0]]}"
+
+    def _shift_node(node, skip_keys: set[str] | None = None):
+        """Recursively shift ``$ref`` / ``self_ref`` inside an item dict.
+
+        ``skip_keys`` lets the caller exclude keys the outer loop already
+        processed (e.g. the top-level item's own ``self_ref`` — shifting it
+        again would compound the offset).
+        """
+        skip = skip_keys or set()
+        if isinstance(node, dict):
+            for k, v in list(node.items()):
+                if k in skip:
+                    continue
+                if k in ("$ref", "self_ref") and isinstance(v, str):
+                    node[k] = _shift_ref(v)
+                else:
+                    _shift_node(v, skip)
+        elif isinstance(node, list):
+            for v in node:
+                _shift_node(v, skip)
+
+    # Renumber self_ref on every top-level list item, then walk the same
+    # items to shift any internal $ref pointers they carry (e.g. a Picture's
+    # `children` that reference its caption Texts).
+    #
+    # We use a per-iteration "skip set" so the walk doesn't re-shift
+    # ``self_ref``/``$ref`` keys we already processed — otherwise a
+    # top-level Text item would get its self_ref shifted twice (once here,
+    # once when the recursive walk encounters the same key).
+    for list_name in _SELF_REF_LISTS:
+        for item in doc.get(list_name) or []:
+            if isinstance(item, dict):
+                # Shift the item's own self_ref first.
+                if "self_ref" in item and isinstance(item["self_ref"], str):
+                    item["self_ref"] = _shift_ref(item["self_ref"])
+                # Then walk the rest of the item, but skip keys the
+                # recursive walk would otherwise re-shift (self_ref, $ref)
+                # AND any key whose value we already handled explicitly.
+                _shift_node(item, skip_keys={"self_ref"})
+
+    # body.children is a list of {"$ref": "..."} pointers — shift each one.
+    body = doc.get("body") or {}
+    for child in body.get("children") or []:
+        if isinstance(child, dict) and "$ref" in child and isinstance(child["$ref"], str):
+            child["$ref"] = _shift_ref(child["$ref"])  # no skip needed — only key is $ref
+
+    return doc
+
+
 def _merge_document_json(results: list[ConversionResult]) -> str | None:
     """Merge document_json across batches by concatenating texts/body children.
 
     Each batch produces an independent DoclingDocument. We merge by appending
-    their `texts`, `tables`, `pictures`, `groups` lists and their `body.children`
-    refs, producing a single flat document that covers all pages. This is
-    sufficient for the Structure tree and reasoning tunnel — structural nesting
-    within a batch is preserved; cross-batch heading hierarchy is not, but that
-    is acceptable for a batched conversion.
+    their ``texts``, ``tables``, ``pictures``, ``groups`` lists and their
+    ``body.children`` refs, producing a single flat document that covers all
+    pages. To keep the merged doc's ``self_ref`` values globally unique (the
+    Neo4j writer enforces a ``(doc_id, self_ref)`` composite uniqueness
+    constraint — see ``infra/neo4j/schema.py``), each batch's indices are
+    shifted by the running totals from prior batches. Structural nesting
+    within a batch is preserved; cross-batch heading hierarchy is not, but
+    that is acceptable for a batched conversion.
     """
     import json as _json
 
@@ -56,6 +153,10 @@ def _merge_document_json(results: list[ConversionResult]) -> str | None:
     merged_pages: dict = {}
     first_doc: dict | None = None
 
+    # Running counts so each batch's self_ref indices are globally unique
+    # in the merged document.
+    n_texts = n_tables = n_pictures = n_groups = 0
+
     for r in results:
         if not r.document_json:
             continue
@@ -65,12 +166,36 @@ def _merge_document_json(results: list[ConversionResult]) -> str | None:
             continue
         if first_doc is None:
             first_doc = doc
-        merged_texts.extend(doc.get("texts") or [])
-        merged_tables.extend(doc.get("tables") or [])
-        merged_pictures.extend(doc.get("pictures") or [])
-        merged_groups.extend(doc.get("groups") or [])
+
+        # Renumber this batch's refs before appending, so the merged doc's
+        # $ref pointers are consistent within each batch's contribution.
+        # The first batch keeps its original indices (offset 0); later
+        # batches are shifted by the running totals.
+        if n_texts + n_tables + n_pictures + n_groups > 0:
+            _renumber_batch_doc(
+                doc,
+                offset_texts=n_texts,
+                offset_tables=n_tables,
+                offset_pictures=n_pictures,
+                offset_groups=n_groups,
+            )
+
+        texts = doc.get("texts") or []
+        tables = doc.get("tables") or []
+        pictures = doc.get("pictures") or []
+        groups = doc.get("groups") or []
+
+        merged_texts.extend(texts)
+        merged_tables.extend(tables)
+        merged_pictures.extend(pictures)
+        merged_groups.extend(groups)
         merged_body_children.extend((doc.get("body") or {}).get("children") or [])
         merged_pages.update(doc.get("pages") or {})
+
+        n_texts += len(texts)
+        n_tables += len(tables)
+        n_pictures += len(pictures)
+        n_groups += len(groups)
 
     if first_doc is None:
         return None
