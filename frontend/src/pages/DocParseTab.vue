@@ -105,6 +105,7 @@
       <div class="parse-stage">
         <PagePreviewWithOverlay
           v-if="documentStore.workspacePages.length"
+          :key="previewKey"
           :document-id="docId"
           :pages="documentStore.workspacePages"
           :current-page="currentPage"
@@ -326,6 +327,16 @@ function onCollapseAll(): void {
   treeDefaultOpen.value = false
   treeRemountKey.value++
 }
+
+// Re-mount the PagePreviewWithOverlay whenever the active analysis changes
+// (e.g. user picks a different version from the History drawer). Without
+// this, the preview keeps stale internal state (current page, hovered
+// element, bbox overlay) from the previous version. Same idea as
+// `treeRemountKey` above — the watch() in onMounted() handles data reload
+// for the tree, but the preview needs a hard re-mount to drop its DOM state.
+const previewKey = computed(
+  () => `preview-${documentStore.workspaceActiveAnalysis?.id ?? 'none'}-${treeRemountKey.value}`,
+)
 
 const tree = ref<DocTreeNode[]>([])
 const treeLoading = ref(false)
