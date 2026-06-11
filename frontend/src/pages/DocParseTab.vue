@@ -573,6 +573,33 @@ function findPageOfRef(
   overflow: auto;
 }
 
+/* Copy / Download icon buttons. Self-contained styles so DocParseTab
+   doesn't have to depend on ResultTabs' scoped `.copy-btn` (which won't
+   cross component boundaries). */
+.parse-json-view .json-actions .copy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.parse-json-view .json-actions .copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.parse-json-view .json-actions .copy-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .parse-body {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 360px;
