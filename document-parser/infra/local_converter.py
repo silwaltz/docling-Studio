@@ -167,6 +167,7 @@ from domain.value_objects import (
     PageDetail,
     PageElement,
 )
+from domain.services import VLM_JSON_SECTIONS
 from infra.bbox import to_topleft_list
 from infra.settings import settings
 
@@ -522,54 +523,48 @@ def _build_vlm_converter(options: ConversionOptions | None = None) -> DoclingCon
 
 def _merge_vlm_json_pages(page_jsons: list[str]) -> str:
     """Merge per-page JSON extractions into a single deduplicated JSON.
-    
+
     Args:
         page_jsons: List of JSON strings, one per page
-        
+
     Returns:
         Single merged JSON string with deduplicated values
     """
     import json
-    
-    # Collect all values by section
-    sections = {
-        "Company Name": [],
-        "Address": [],
-        "Shipping Information": [],
-        "Good Description": []
-    }
-    
+
+    # Collect all values by section. The set of canonical prefixes lives in
+    # `domain.services.VLM_JSON_SECTIONS` — keep the two in sync if a new
+    # section is added (or import this helper instead of duplicating the list).
+    sections = {name: [] for name in VLM_JSON_SECTIONS}
+    ordered = sorted(VLM_JSON_SECTIONS, key=len, reverse=True)
+
     for page_json in page_jsons:
         if not page_json or not page_json.strip():
             continue
-            
+
         try:
             # Parse JSON from page
             data = json.loads(page_json)
-            
+
             # Extract values by section
             for key, value in data.items():
                 # Determine section from key prefix
-                if key.startswith("Company Name"):
-                    sections["Company Name"].append(value)
-                elif key.startswith("Address"):
-                    sections["Address"].append(value)
-                elif key.startswith("Shipping Information"):
-                    sections["Shipping Information"].append(value)
-                elif key.startswith("Good Description"):
-                    sections["Good Description"].append(value)
+                for prefix in ordered:
+                    if key.startswith(prefix):
+                        sections[prefix].append(value)
+                        break
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse VLM JSON from page: {e}")
             continue
-    
+
     # Deduplicate values (case-insensitive, trimmed)
     merged = {}
-    counter = 1
-    
-    for section_name in ["Company Name", "Address", "Shipping Information", "Good Description"]:
+
+    for section_name in VLM_JSON_SECTIONS:
         values = sections[section_name]
         seen = set()
-        
+        counter = 1
+
         for value in values:
             if not value:
                 continue
@@ -580,7 +575,7 @@ def _merge_vlm_json_pages(page_jsons: list[str]) -> str:
                 key = f"{section_name}{counter}"
                 merged[key] = value.strip()
                 counter += 1
-    
+
     return json.dumps(merged, indent=2, ensure_ascii=False)
 
 

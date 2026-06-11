@@ -110,21 +110,43 @@
           <span>No JSON data available. Use VLM pipeline to extract structured data.</span>
         </div>
         <template v-else>
-          <button class="copy-btn copy-btn-block" :title="'Copy JSON'" @click="copyJson">
-            <svg v-if="!copiedJson" viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
-              <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
-              <path
-                d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"
-              />
-            </svg>
-            <svg v-else viewBox="0 0 20 20" fill="currentColor" class="copy-icon copied">
-              <path
-                fill-rule="evenodd"
-                d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                clip-rule="evenodd"
-              />
-            </svg>
-          </button>
+          <div class="json-actions">
+            <button
+              class="copy-btn"
+              :title="t('results.copy')"
+              @click="copyJson"
+              data-e2e="json-copy"
+            >
+              <svg v-if="!copiedJson" viewBox="0 0 20 20" fill="currentColor" class="copy-icon">
+                <path d="M8 2a1 1 0 000 2h2a1 1 0 100-2H8z" />
+                <path
+                  d="M3 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v6h-4.586l1.293-1.293a1 1 0 00-1.414-1.414l-3 3a1 1 0 000 1.414l3 3a1 1 0 001.414-1.414L10.414 13H15v3a2 2 0 01-2 2H5a2 2 0 01-2-2V5zM15 11h2a1 1 0 110 2h-2v-2z"
+                />
+              </svg>
+              <svg v-else viewBox="0 0 20 20" fill="currentColor" class="copy-icon copied">
+                <path
+                  fill-rule="evenodd"
+                  d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </button>
+            <button
+              class="copy-btn"
+              :title="t('analysis.downloadJson')"
+              @click="downloadJson"
+              data-e2e="json-download"
+              aria-label="Download JSON"
+            >
+              <svg viewBox="0 0 20 20" fill="currentColor" class="copy-icon" aria-hidden="true">
+                <path
+                  fill-rule="evenodd"
+                  d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+            </button>
+          </div>
           <pre class="raw-content json-content" data-e2e="json-content">{{ formattedJson }}</pre>
         </template>
       </div>
@@ -377,6 +399,35 @@ async function copyJson() {
   }
 }
 
+/** Download the extracted JSON as a .json file. Uses the same `\_` → space
+ *  cleanup as the Ask page downloader, so the file matches what a human
+ *  would type (gemma4 escapes spaces inside string values as `\_`). */
+function cleanJsonForDownload(json: string): string {
+  return json.replace(/\\_/g, ' ')
+}
+
+function downloadJson(): void {
+  if (!jsonData.value) return
+  const cleaned = cleanJsonForDownload(jsonData.value)
+  // Pretty-print (jsonData is the raw string from the API; ask page uses
+  // formattedJson for the displayed text — we keep that as the on-disk
+  // source of truth too).
+  let pretty = formattedJson.value
+  try {
+    pretty = JSON.stringify(JSON.parse(cleaned), null, 2)
+  } catch {
+    /* fall back to the raw formatted string if re-parse fails */
+  }
+  const blob = new Blob([pretty], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const docId = store.currentAnalysis?.documentId || 'document'
+  a.download = `${docId}-extracted.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 async function copyElement(idx: number, content: string) {
   try {
     await navigator.clipboard.writeText(content)
@@ -582,6 +633,16 @@ async function copyElement(idx: number, content: string) {
   background: var(--bg-surface);
   opacity: 0;
   transition: opacity var(--transition);
+}
+
+.json-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.json-actions .copy-btn {
+  background: var(--bg-surface);
 }
 
 .raw-markdown:hover .copy-btn-block {

@@ -215,6 +215,7 @@ const messages: Messages = {
     'results.analysisFailed': "L'analyse a échoué",
     'results.copy': 'Copier',
     'results.copied': 'Copié !',
+    'analysis.downloadJson': 'Télécharger JSON',
     'results.page': 'Page',
 
     // Upload
@@ -413,7 +414,7 @@ const messages: Messages = {
     'ask.questionLabel': 'Question',
     'ask.questionPlaceholder': 'Ex\u00a0: Quelles sont les obligations du fournisseur\u00a0?',
     'ask.modelConfig': 'Mod\u00e8le (optionnel)',
-    'ask.modelPlaceholder': 'gemma4:e4b',
+    'ask.modelPlaceholder': 'gemma4:e4b-it-qat',
     'ask.model': 'Modèle',
     'ask.clear': 'Effacer',
     'ask.send': 'Envoyer',
@@ -888,6 +889,7 @@ const messages: Messages = {
     'results.analysisFailed': 'Analysis failed',
     'results.copy': 'Copy',
     'results.copied': 'Copied!',
+    'analysis.downloadJson': 'Download JSON',
     'results.page': 'Page',
 
     'upload.drop': 'Drop a PDF here or click to upload',
@@ -1077,8 +1079,8 @@ const messages: Messages = {
     'ask.questionLabel': 'Question',
     'ask.questionPlaceholder': 'e.g. What are the supplier obligations?',
     'ask.modelConfig': 'Model (optional)',
-    'ask.modelPlaceholder': 'gemma4:e4b',
-    'ask.modelHint': 'Ollama model name. Leave empty to use the server default.',
+    'ask.modelPlaceholder': 'gemma4:e4b-it-qat',
+    'ask.modelHint': 'Ollama model name. Leave empty to use the server default (filled in on load from /api/documents/ollama-status).',
     'ask.run': 'Run',
     'ask.running': 'Reasoning…',
     'ask.answerLabel': 'Answer',
@@ -1090,7 +1092,7 @@ const messages: Messages = {
     'ask.inputPlaceholder': 'Ask a question about this document… (Enter to send)',
     'ask.emptyTitle': 'Ask about this document',
     'ask.emptySub': 'The analysed document is used as context. Ask for summaries, explanations, or suggestions on what to change.',
-    'ask.suggestion1': 'Extract all addresses, company names, shipping information, and goods descriptions from the document as JSON format.',
+    'ask.suggestion1': 'Extract every distinct entity from this page and return a single JSON object. Use exactly these four key prefixes with a numeric suffix starting at 1 (Company Name1, Address1, Shipping Information1, Goods Description1, etc.): "Company Name<n>" = a company, bank, agency, or organization name; "Address<n>" = a postal or physical address (one line per key, multi-line addresses get multiple Address<n>); "Shipping Information<n>" = port, vessel, container, B/L, AWB, or routing info; "Goods Description<n>" = a description of goods, items, or cargo. Rules: Output ONLY the JSON object - no markdown, no code fences, no commentary. Every value MUST be a plain string (no arrays, no nested objects). Include every distinct entity you find; do not deduplicate. If a section has no entries on this page, omit its keys entirely. Replace newlines inside values with a single space.',
     'ask.downloadJson': 'Download JSON',
 
     // Doc workspace (#216, #218 — switcher refactored in #263, modes renamed

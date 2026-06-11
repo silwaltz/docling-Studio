@@ -66,7 +66,11 @@
               @click="downloadJson(msg.content)"
             >
               <svg viewBox="0 0 20 20" fill="currentColor" class="ask-download-icon">
-                <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                <path
+                  fill-rule="evenodd"
+                  d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z"
+                  clip-rule="evenodd"
+                />
               </svg>
               {{ t('ask.downloadJson') }}
             </button>
@@ -88,9 +92,7 @@
         </div>
 
         <!-- Error -->
-        <div v-if="chatError" class="ask-error" data-e2e="ask-error">
-          ⚠ {{ chatError }}
-        </div>
+        <div v-if="chatError" class="ask-error" data-e2e="ask-error">⚠ {{ chatError }}</div>
       </template>
     </div>
 
@@ -115,7 +117,9 @@
         @click="onSend"
       >
         <svg viewBox="0 0 20 20" fill="currentColor" class="ask-send-icon">
-          <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+          <path
+            d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z"
+          />
         </svg>
       </button>
     </div>
@@ -138,7 +142,10 @@ const streamBuffer = ref('')
 const messagesEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 
-const DEFAULT_MODEL = 'gemma4:e4b'
+// Default is filled in by the backend's /api/documents/ollama-status response
+// (which returns the configured `chat_model_id`). We only fall back to a
+// hard-coded value if that endpoint is unreachable.
+const FALLBACK_MODEL = 'gemma4:e4b'
 const modelId = ref('')
 
 const ollamaWarning = ref<string | null>(null)
@@ -154,6 +161,12 @@ onMounted(async () => {
     const resp = await fetch('/api/documents/ollama-status')
     if (resp.ok) {
       const status = await resp.json()
+      // Pre-fill the model input with the backend's configured default
+      // (chat_model_id from infra/settings.py). User can still override it
+      // per-message; if the backend default changes, the UI follows on reload.
+      if (status.model) {
+        modelId.value = status.model
+      }
       if (!status.reachable) {
         ollamaWarning.value =
           `Ollama is not reachable at ${status.host}. ` +
@@ -169,19 +182,89 @@ onMounted(async () => {
 const canSend = computed(() => draft.value.trim().length > 0 && !streaming.value)
 
 function extractJson(text: string): string | null {
+  // 1) Code-fenced JSON the model may have wrapped: ```json { ... } ```
   const fenced = text.match(/```(?:json)?\s*([\s\S]+?)```/)
-  if (fenced) return fenced[1].trim()
-  const bare = text.match(/({[\s\S]+}|\[[\s\S]+\])/)
-  if (bare) {
-    try { JSON.parse(bare[1]); return bare[1].trim() } catch { /* not valid json */ }
+  if (fenced) {
+    const candidate = fenced[1].trim()
+    try {
+      JSON.parse(candidate)
+      return candidate
+    } catch {
+      /* fall through to bare-JSON detection */
+    }
   }
+
+  // 2) Bare JSON object/array somewhere in the text. Use a non-greedy
+  //    match for the opening brace/bracket, then walk forward to find
+  //    the matching close that yields a parseable JSON. The model
+  //    sometimes prefixes the JSON with "Sure, here it is:" and may
+  //    embed control characters that broke the old greedy match.
+  for (const openChar of ['{', '[']) {
+    const closeChar = openChar === '{' ? '}' : ']'
+    const start = text.indexOf(openChar)
+    if (start < 0) continue
+    let depth = 0
+    let inString = false
+    let escape = false
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i]
+      if (escape) {
+        escape = false
+        continue
+      }
+      if (inString) {
+        if (ch === '\\') escape = true
+        else if (ch === '"') inString = false
+        continue
+      }
+      if (ch === '"') inString = true
+      else if (ch === openChar) depth++
+      else if (ch === closeChar) {
+        depth--
+        if (depth === 0) {
+          const candidate = text.slice(start, i + 1)
+          try {
+            JSON.parse(candidate)
+            return candidate
+          } catch {
+            break // malformed — try the next opening char
+          }
+        }
+      }
+    }
+  }
+
   return null
+}
+
+/**
+ * Clean a model-generated JSON string before saving to disk.
+ * Some Ollama models (notably gemma4:e4b-it-qat) escape spaces inside string
+ * values as `\_` to keep the JSON one-line printable. The escape is valid JSON
+ * (the `_` is just a literal underscore after the backslash) but produces ugly
+ * output when re-parsed. Replace `\_` with a plain space so the downloaded
+ * file matches what a human would type.
+ *
+ * Other backslash escapes that the spec recognises (`\"`, `\\`, `\/`, `\b`,
+ * `\f`, `\n`, `\r`, `\t`, `\uXXXX`) are left untouched.
+ */
+function cleanJsonForDownload(json: string): string {
+  return json.replace(/\\_/g, ' ')
 }
 
 function downloadJson(content: string): void {
   const json = extractJson(content)
   if (!json) return
-  const blob = new Blob([json], { type: 'application/json' })
+  const cleaned = cleanJsonForDownload(json)
+  // Pretty-print so the downloaded file is human-readable (model emits
+  // single-line JSON, which is fine for parsing but ugly in editors).
+  let pretty = cleaned
+  try {
+    pretty = JSON.stringify(JSON.parse(cleaned), null, 2)
+  } catch {
+    // fall back to the cleaned raw string if re-parse fails
+  }
+  const blob = new Blob([pretty], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -249,7 +332,7 @@ async function onSend(): Promise<void> {
   streaming.value = true
   streamBuffer.value = ''
 
-  const model = modelId.value.trim() || DEFAULT_MODEL
+  const model = modelId.value.trim() || FALLBACK_MODEL
 
   try {
     const resp = await fetch(`/api/documents/${props.docId}/chat`, {
@@ -516,9 +599,15 @@ async function onSend(): Promise<void> {
   font-weight: 600;
 }
 
-.ask-message-content :deep(h1) { font-size: 15px; }
-.ask-message-content :deep(h2) { font-size: 14px; }
-.ask-message-content :deep(h3) { font-size: 13px; }
+.ask-message-content :deep(h1) {
+  font-size: 15px;
+}
+.ask-message-content :deep(h2) {
+  font-size: 14px;
+}
+.ask-message-content :deep(h3) {
+  font-size: 13px;
+}
 
 .ask-message-content :deep(ul) {
   margin: 4px 0;
@@ -557,12 +646,24 @@ async function onSend(): Promise<void> {
   animation: ask-pulse 1.2s ease-in-out infinite;
 }
 
-.ask-dot:nth-child(2) { animation-delay: 0.2s; }
-.ask-dot:nth-child(3) { animation-delay: 0.4s; }
+.ask-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.ask-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
 
 @keyframes ask-pulse {
-  0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-  40% { opacity: 1; transform: scale(1); }
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Error */

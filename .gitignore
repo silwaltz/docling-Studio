@@ -56,3 +56,9 @@ docs/claude-code-commands.md
 docs/design/TEMPLATE.md
 docs/git-workflow/autonomy-mode.md
 
+# Local extraction / batch testing artifacts
+extracted-json/
+**/_*.py
+!document-parser/**/AGENTS.md
+!frontend/**/AGENTS.md
+

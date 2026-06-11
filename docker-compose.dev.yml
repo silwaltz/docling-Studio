@@ -115,13 +115,13 @@ services:
       STORE_SECRET_KEY: ${STORE_SECRET_KEY:-}
       # Document Q&A chat via Ollama (running on host)
       CHAT_ENABLED: ${CHAT_ENABLED:-true}
-      CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b}
+      CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b-it-qat}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
       # VLM backend settings
       VLM_BACKEND: ${VLM_BACKEND:-ollama}
       VLM_FALLBACK_MODEL: ${VLM_FALLBACK_MODEL:-GRANITEDOCLING_TRANSFORMERS}
-      VLM_OLLAMA_MODEL: ${VLM_OLLAMA_MODEL:-qwen3-vl:8b}
-      VLM_OLLAMA_PROMPT: '${VLM_OLLAMA_PROMPT:-Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.}'
+      VLM_OLLAMA_MODEL: ${VLM_OLLAMA_MODEL:-qwen3-vl:8b-instruct}
+      VLM_OLLAMA_PROMPT: '${VLM_OLLAMA_PROMPT:-Extract every distinct entity from this page and return a single JSON object. Use exactly these four key prefixes with a numeric suffix starting at1 (Company Name1, Address1, Shipping Information1, Goods Description1, etc.): "Company Name<n>" = a company, bank, agency, or organization name; "Address<n>" = a postal or physical address (one line per key, multi-line addresses get multiple Address<n>); "Shipping Information<n>" = port, vessel, container, B/L, AWB, or routing info; "Goods Description<n>" = a description of goods, items, or cargo. Rules: Output ONLY the JSON object - no markdown, no code fences, no commentary. Every value MUST be a plain string (no arrays, no nested objects). Include every distinct entity you find; do not deduplicate. If a section has no entries on this page, omit its keys entirely. Replace newlines inside values with a single space.}'
       VLM_OLLAMA_MAX_TOKENS: ${VLM_OLLAMA_MAX_TOKENS:-131072}
       VLM_REMOTE_TIMEOUT: ${VLM_REMOTE_TIMEOUT:-3600}
       VLM_IMAGE_SCALE: ${VLM_IMAGE_SCALE:-2.0}

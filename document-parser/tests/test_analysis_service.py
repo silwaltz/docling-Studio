@@ -12,6 +12,7 @@ import pytest
 from domain.models import AnalysisStatus
 from domain.services import extract_html_body, merge_results
 from domain.value_objects import ConversionResult, PageDetail
+from infra.local_converter import _merge_vlm_json_pages
 from services.analysis_service import AnalysisConfig, AnalysisService, _count_pdf_pages
 
 
@@ -304,6 +305,104 @@ class TestMergeResults:
         # Valid HTML structure
         assert merged.content_html.startswith("<!DOCTYPE html>")
         assert "</body></html>" in merged.content_html
+
+
+# ---------------------------------------------------------------------------
+# VLM JSON merge — regression coverage for missing Goods Description /
+# Phone / Fax sections (bug: sections dict was hardcoded and "Goods
+# Description" was mistyped as "Good Description" in the per-page merge).
+# ---------------------------------------------------------------------------
+
+
+class TestMergeContentJson:
+    def test_four_sections_preserved(self):
+        """Goods Description must survive both merge passes (the original
+        Goods/Address/Company/Shipping quartet). Phone/Fax are no longer
+        included in VLM_JSON_SECTIONS per user request — the trade-document
+        schema is Company / Address / Shipping / Goods only.
+        """
+        page_json = json.dumps({
+            "Company Name1": "ACME",
+            "Address1": "1 Main St",
+            "Shipping Information1": "FOB HK",
+            "Goods Description1": "LADIES PULLOVER - PO CK13B001",
+        })
+        # Per-page merge
+        merged = _merge_vlm_json_pages([page_json])
+        parsed = json.loads(merged)
+        assert "Goods Description1" in parsed, "Goods Description lost in per-page merge"
+
+        # Cross-batch merge
+        r = ConversionResult(
+            page_count=1,
+            content_markdown="",
+            content_html="",
+            pages=[PageDetail(page_number=1, width=612, height=792)],
+            content_json=merged,
+        )
+        out = merge_results([r])
+        parsed2 = json.loads(out.content_json)
+        assert parsed2["Goods Description1"] == "LADIES PULLOVER - PO CK13B001"
+
+    def test_dedup_across_pages_and_batches(self):
+        """Duplicates across pages/batches collapse into a single key.
+
+        Per-section counters run independently — Address has two distinct
+        values (A, B) so it gets Address1 + Address2, while Goods Description
+        has one duplicate value so it stays at Goods Description1.
+        """
+        p1 = json.dumps({"Goods Description1": "PULLOVER", "Address1": "A"})
+        p2 = json.dumps({"Goods Description1": "PULLOVER", "Address1": "B"})
+        merged = _merge_vlm_json_pages([p1, p2])
+        parsed = json.loads(merged)
+        assert list(parsed.keys()) == ["Address1", "Address2", "Goods Description1"]
+        assert parsed["Address1"] == "A"
+        assert parsed["Address2"] == "B"
+        assert parsed["Goods Description1"] == "PULLOVER"
+
+        # And again across batches
+        r1 = ConversionResult(
+            page_count=2, content_markdown="", content_html="",
+            pages=[PageDetail(page_number=1, width=612, height=792)],
+            content_json=merged,
+        )
+        r2 = ConversionResult(
+            page_count=2, content_markdown="", content_html="",
+            pages=[PageDetail(page_number=3, width=612, height=792)],
+            content_json=json.dumps({"Goods Description1": "PULLOVER", "Address1": "C"}),
+        )
+        out = merge_results([r1, r2])
+        parsed2 = json.loads(out.content_json)
+        assert parsed2["Address1"] == "A"
+        assert parsed2["Address2"] == "B"
+        assert parsed2["Address3"] == "C"
+        assert parsed2["Goods Description1"] == "PULLOVER"
+
+    def test_empty_content_json_does_not_crash(self):
+        """A batch with no VLM JSON output should produce None, not raise."""
+        r = ConversionResult(
+            page_count=1, content_markdown="", content_html="",
+            pages=[PageDetail(page_number=1, width=612, height=792)],
+            content_json=None,
+        )
+        out = merge_results([r])
+        assert out.content_json is None
+
+    def test_malformed_content_json_skipped(self):
+        """Bad JSON in one batch must not break the whole merge."""
+        r1 = ConversionResult(
+            page_count=1, content_markdown="", content_html="",
+            pages=[PageDetail(page_number=1, width=612, height=792)],
+            content_json="{ not json",
+        )
+        r2 = ConversionResult(
+            page_count=1, content_markdown="", content_html="",
+            pages=[PageDetail(page_number=2, width=612, height=792)],
+            content_json=json.dumps({"Goods Description1": "X"}),
+        )
+        out = merge_results([r1, r2])
+        parsed = json.loads(out.content_json)
+        assert parsed["Goods Description1"] == "X"
 
 
 # ---------------------------------------------------------------------------

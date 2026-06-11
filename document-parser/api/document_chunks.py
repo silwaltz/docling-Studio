@@ -177,13 +177,19 @@ async def rechunk_document(
 
 
 @router.get("/{doc_id}/tree", response_model=list[DocTreeNodeResponse])
-async def get_tree(doc_id: str, service: ServiceDep) -> list[DocTreeNodeResponse]:
-    """Outline of the document built from the latest completed analysis.
+async def get_tree(
+    doc_id: str,
+    service: ServiceDep,
+    analysis_id: str | None = Query(default=None, alias="analysisId"),
+) -> list[DocTreeNodeResponse]:
+    """Outline of the document built from the latest completed analysis,
+    or from the analysis the workspace currently has pinned (when the
+    user has restored an older version via the History drawer).
 
     Returns `[]` if no analysis is available yet.
     """
     try:
-        tree = await service.get_tree(doc_id)
+        tree = await service.get_tree(doc_id, analysis_id=analysis_id)
     except ChunkServiceError as e:
         _raise_for(e)
     return [DocTreeNodeResponse(**node) for node in tree]

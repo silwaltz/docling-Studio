@@ -54,7 +54,10 @@ class Settings:
     # extracted markdown as context. No heavy deps required beyond httpx.
     # Set CHAT_ENABLED=true and CHAT_MODEL_ID to a model already pulled in Ollama.
     chat_enabled: bool = True
-    chat_model_id: str = "gemma4:e4b"  # any model pulled in Ollama
+    # Use the actual installed model tag (gemma4:e4b is a logical alias;
+    # ollama stores it as gemma4:e4b-it-qat). Tests should match one of
+    # these two — see infra/settings.py validation and tests/test_settings.py.
+    chat_model_id: str = "gemma4:e4b-it-qat"  # any model pulled in Ollama
     opensearch_default_limit: int = 1000  # max chunks returned by get_chunks
     embedding_dimension: int = 384  # Granite Embedding 30M / all-MiniLM-L6-v2
     upload_dir: str = "./uploads"

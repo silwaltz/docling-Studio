@@ -874,3 +874,113 @@ class TestGetTree:
         list_node = tree[0]
         assert list_node["type"] == "list"
         assert [c["label"] for c in list_node["children"]] == ["First", "Second"]
+
+    # --- analysis_id pinning (regression for History-restore sync bug) ---
+    # The History drawer lets users restore an older version, and that
+    # pin is **client-side only**. Without an explicit `analysis_id`,
+    # `get_tree` falls back to the latest completed analysis and the
+    # Visual tab shows the wrong tree. See DocParseTab.vue#loadTree.
+
+    DOC_JSON_OLD = json.dumps({
+        "body": {
+            "self_ref": "#/body",
+            "children": [{"$ref": "#/texts/0"}],
+            "content_layer": "body",
+        },
+        "texts": [
+            {"self_ref": "#/texts/0", "label": "paragraph", "text": "OLD version"},
+        ],
+        "groups": [], "pictures": [], "tables": [], "pages": {},
+    })
+    DOC_JSON_NEW = json.dumps({
+        "body": {
+            "self_ref": "#/body",
+            "children": [{"$ref": "#/texts/0"}],
+            "content_layer": "body",
+        },
+        "texts": [
+            {"self_ref": "#/texts/0", "label": "paragraph", "text": "NEW version"},
+        ],
+        "groups": [], "pictures": [], "tables": [], "pages": {},
+    })
+
+    async def _make_analysis(self, repos, doc_id, analysis_id, document_json, completed_at):
+        # `insert` only writes (id, document_id, status, created_at);
+        # document_json / started_at / completed_at are written by
+        # `update_status`. This matches the pattern in the other
+        # TestGetTree tests above. Pass a distinct `completed_at` per
+        # row — otherwise `find_latest_completed_by_document` ORDER BY
+        # DESC LIMIT 1 returns whichever SQLite scanned first, which
+        # makes these tests flaky.
+        job = AnalysisJob(
+            id=analysis_id,
+            document_id=doc_id,
+            status=AnalysisStatus.COMPLETED,
+        )
+        await repos["analyses"].insert(job)
+        job.document_json = document_json
+        job.started_at = completed_at
+        job.completed_at = completed_at
+        await repos["analyses"].update_status(job)
+
+    async def test_tree_falls_back_to_latest_when_no_analysis_id(
+        self, repos, doc, service
+    ):
+        await self._make_analysis(
+            repos, doc.id, "old", self.DOC_JSON_OLD,
+            datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        await self._make_analysis(
+            repos, doc.id, "new", self.DOC_JSON_NEW,
+            datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        joined = json.dumps(await service.get_tree(doc.id))
+        assert "NEW version" in joined
+        assert "OLD version" not in joined
+
+    async def test_tree_pins_to_specified_analysis_id(
+        self, repos, doc, service
+    ):
+        await self._make_analysis(
+            repos, doc.id, "old", self.DOC_JSON_OLD,
+            datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        await self._make_analysis(
+            repos, doc.id, "new", self.DOC_JSON_NEW,
+            datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        joined = json.dumps(await service.get_tree(doc.id, analysis_id="old"))
+        assert "OLD version" in joined
+        assert "NEW version" not in joined
+
+    async def test_tree_unknown_analysis_id_falls_back(
+        self, repos, doc, service
+    ):
+        await self._make_analysis(
+            repos, doc.id, "only", self.DOC_JSON_NEW,
+            datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        joined = json.dumps(
+            await service.get_tree(doc.id, analysis_id="does-not-exist")
+        )
+        assert "NEW version" in joined
+
+    async def test_tree_rejects_foreign_analysis_id(
+        self, repos, doc, service
+    ):
+        """Don't leak another doc's tree if the caller passes an
+        analysis_id that doesn't belong to this document.
+        """
+        other_doc = Document(id="doc-2", filename="o.pdf", storage_path="/tmp/o.pdf")
+        await repos["documents"].insert(other_doc)
+        await self._make_analysis(
+            repos, "doc-2", "foreign", self.DOC_JSON_OLD,
+            datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        await self._make_analysis(
+            repos, doc.id, "new", self.DOC_JSON_NEW,
+            datetime(2024, 6, 1, tzinfo=UTC),
+        )
+        joined = json.dumps(await service.get_tree(doc.id, analysis_id="foreign"))
+        assert "NEW version" in joined
+        assert "OLD version" not in joined

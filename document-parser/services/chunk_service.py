@@ -786,15 +786,40 @@ class ChunkService:
 
     # -- tree (read from latest analysis document_json)
 
-    async def get_tree(self, document_id: str) -> list[dict]:
-        """Build a doc tree from the latest completed analysis.
+    async def get_tree(
+        self, document_id: str, analysis_id: str | None = None
+    ) -> list[dict]:
+        """Build a doc tree from a specific analysis (or the latest completed one).
+
+        `analysis_id` is the workspace's currently-pinned version — the
+        History drawer lets the user restore an older version, and that
+        pointer is **client-side only** (see the docstring on
+        `POST /versions/{id}/restore`), so the API has to be told which
+        analysis to read from. When `analysis_id` is None we fall back
+        to the latest completed analysis (the conventional "no restore"
+        case).
 
         Returns a list of `DocTreeNode`-shaped dicts (camelCase). Empty
         list if no analysis is available yet — caller decides if that is
         an error or just "not parsed yet".
         """
         await self._require_doc(document_id)
-        job = await self._analyses.find_latest_completed_by_document(document_id)
+        if analysis_id:
+            job = await self._analyses.find_by_id(analysis_id)
+            # Cross-check: only honor an analysis_id that actually belongs
+            # to this document, otherwise we'd happily serialize somebody
+            # else's tree.
+            if job and job.document_id != document_id:
+                logger.warning(
+                    "get_tree: analysis %s does not belong to doc %s — "
+                    "falling back to latest completed",
+                    analysis_id, document_id,
+                )
+                job = None
+        else:
+            job = None
+        if job is None:
+            job = await self._analyses.find_latest_completed_by_document(document_id)
         if not job or not job.document_json:
             return []
         try:

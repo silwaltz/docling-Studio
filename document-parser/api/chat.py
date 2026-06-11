@@ -25,18 +25,25 @@ from infra.settings import settings
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/documents", tags=["chat"])
 
+# Aligned with `vlm_ollama_prompt` in `infra/settings.py` — single prompt template
+# used by both VLM-direct and standard-pipeline-→-Ask paths so the user sees
+# consistent output regardless of which pipeline produced the document. (#Ask prompt)
 _SYSTEM_PROMPT = (
     """
-    Return json format with below structure:
-    {{
-        "Company Name1": "value1",
-        "Address1": "value1",
-        "Shipping Information1": "value1",
-        "Good Description1": "value1",
-    }}
-    Only these four sections are allowed, add more rows if you find more than one entry for each section. No duplication.
-    Return all company first, then address, then shipping information, then good description.
-    Document context: {context}
+    Extract every distinct entity from this page and return a single JSON object. "
+    "Use exactly these four key prefixes with a numeric suffix starting at "
+    "1 (Company Name1, Address1, Shipping Information1, Goods Description1, etc.): "
+    "\"Company Name<n>\" = a company, bank, agency, or organization name; "
+    "\"Address<n>\" = a postal or physical address (one line per key, multi-line "
+    "addresses get multiple Address<n>); "
+    "\"Shipping Information<n>\" = port, vessel, container, B/L, AWB, or routing info; "
+    "\"Goods Description<n>\" = a description of goods, items, or cargo. "
+    "Rules: Output ONLY the JSON object - no markdown, no code fences, no commentary. "
+    "Every value MUST be a plain string (no arrays, no nested objects). "
+    "Include every distinct entity you find; do not deduplicate. "
+    "If a section has no entries on this page, omit its keys entirely. "
+    "Replace newlines inside values with a single space. "
+    "Document context: {context}"
     """
 )
 

@@ -9,6 +9,22 @@ from domain.value_objects import ConversionResult, PageDetail
 # Regex to extract <body> content from Docling's well-formed HTML output.
 _BODY_RE = re.compile(r"<body[^>]*>(.*)</body>", re.DOTALL | re.IGNORECASE)
 
+# Canonical VLM JSON sections, used by both per-page merge
+# (`infra/local_converter._merge_vlm_json_pages`) and cross-batch merge
+# (`_merge_content_json` below). Order matters only for visual stability —
+# matching is longest-prefix-first, so a key like `"Addressee"` would NOT be
+# bucketed under `"Address"` because there is no such section here.
+#
+# Phone / Fax were removed — they showed up in a few early batches but
+# turned out to be noisy duplicates of Address content; the user wants
+# the trade-document sections only.
+VLM_JSON_SECTIONS: tuple[str, ...] = (
+    "Company Name",
+    "Address",
+    "Shipping Information",
+    "Goods Description",
+)
+
 
 def extract_html_body(html: str) -> str:
     """Extract content between <body> tags.
@@ -101,8 +117,59 @@ def merge_results(results: list[ConversionResult]) -> ConversionResult:
         pages=all_pages,
         skipped_items=total_skipped,
         document_json=_merge_document_json(results),
+        content_json=_merge_content_json(results),
     )
 
+
+def _merge_content_json(results):
+    """Merge per-batch VLM JSON extractions into a single canonical JSON.
+    Each batch produces a JSON object with the canonical key prefixes defined in
+    `VLM_JSON_SECTIONS` (e.g. "Company Name<n>", "Address<n>",
+    "Shipping Information<n>", "Goods Description<n>", "Phone<n>", "Fax<n>").
+    Re-bucket by section, dedupe, and renumber.
+    """
+    import json
+    sections = {name: [] for name in VLM_JSON_SECTIONS}
+    # Match longest prefix first so we never bucket a key under a shorter
+    # sibling (e.g. "Goods Description" before "Address" — defensive, the
+    # current set has no overlap, but cheap insurance).
+    ordered = sorted(VLM_JSON_SECTIONS, key=len, reverse=True)
+    for r in results:
+        cj = getattr(r, "content_json", None)
+        if not cj:
+            continue
+        try:
+            data = json.loads(cj)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            if not isinstance(key, str):
+                continue
+            for prefix in ordered:
+                if key.startswith(prefix):
+                    sections[prefix].append(value)
+                    break
+    merged = {}
+    for section_name in VLM_JSON_SECTIONS:
+        seen = set()
+        counter = 1
+        for value in sections[section_name]:
+            if value is None:
+                continue
+            s = str(value).strip()
+            if not s:
+                continue
+            normalized = s.lower()
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            merged[f"{section_name}{counter}"] = s
+            counter += 1
+    if not merged:
+        return None
+    return json.dumps(merged, indent=2, ensure_ascii=False)
 
 def classify_error(exc: Exception) -> str:
     """Return a user-friendly error message based on the exception type/content."""
