@@ -84,10 +84,13 @@ async def _stream_ollama(
             "num_ctx": 96_000,
             # The Ask prompt asks the model to enumerate every distinct entity
             # across the document — a 12-page trade/shipping doc can produce
-            # thousands of entities, well past the old 4k output cap, so the
-            # model was getting truncated mid-answer. 16k ≈ ~12k words, enough
-            # for the biggest expected JSON output and most free-form Q&A.
-            "num_predict": 16_384,
+            # tens of thousands of tokens of JSON output, well past the old
+            # 4k cap and still past 16k on dense docs. 96k ≈ ~70k words of
+            # output, enough for the biggest expected JSON enumeration plus
+            # free-form Q&A. Ollama clamps this to num_ctx if it would
+            # overflow the context window, so it stays safe even on smaller
+            # models.
+            "num_predict": 96_000,
         },
     }
 
