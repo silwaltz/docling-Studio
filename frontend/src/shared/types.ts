@@ -58,6 +58,18 @@ export interface PipelineOptions {
   vlm_backend?: string // VLM backend: 'ollama' or 'granite' (empty = server default). Only used with force_vlm_pipeline.
   vlm_image_scale?: number // VLM page render scale (0 = server default). Only used with force_vlm_pipeline.
   vlm_output_mode?: 'json' | 'markdown' // VLM output shape (Ollama only): 'json' (default) or 'markdown'. Ignored by granite.
+  /**
+   * Deep-Extract mode (`'deep'`) — runs BOTH the standard pipeline
+   * (with Ask-step JSON extraction) AND the VLM-direct JSON pipeline,
+   * then unions + dedupes the two JSON extractions. Higher coverage
+   * on the trade-shipping golden set (79.2% vs 69% for standard+Ask
+   * alone; see `extracted-json/merged__SHIPPED_REPORT.md`). The
+   * standard pipeline still produces the markdown / html / pages the
+   * user sees in the Parse tab — only `content_json` is replaced
+   * with the merged result. Defaults to `'standard'`, which
+   * preserves the prior single-pipeline behaviour.
+   */
+  extract_mode?: 'standard' | 'deep'
 }
 
 export type AnalysisStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'

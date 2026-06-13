@@ -173,6 +173,9 @@ const messages: Messages = {
     'config.vlmScaleBalanced': 'Équilibré (3x)',
     'config.vlmScaleHigh': 'Élevé (4x, recommandé)',
     'config.vlmScaleMax': 'Maximum (5x)',
+    'config.deepExtract': 'Extraction profonde',
+    'config.deepExtractHint':
+      'Lance en parallèle le pipeline standard (avec extraction JSON via Ask) ET le pipeline VLM direct (qwen3-vl-instruct) en JSON, puis fusionne les deux résultats (union + déduplication par sous-chaîne, le plus long gagne). +10 points de couverture sur les 4 documents de référence (79% vs 69%). Plus lent (~2x) et nécessite Ollama + qwen3-vl:8b-instruct.',
     'config.preprocessPdfDpi': 'Prétraitement PDF (DPI)',
     'config.preprocessPdfDpiHint':
       'DPI pour le prétraitement (0 = désactivé, 300 = recommandé pour les documents scannés)',
@@ -858,6 +861,9 @@ const messages: Messages = {
     'config.vlmScaleBalanced': 'Balanced (3x)',
     'config.vlmScaleHigh': 'High (4x, recommended)',
     'config.vlmScaleMax': 'Maximum (5x)',
+    'config.deepExtract': 'Deep Extract',
+    'config.deepExtractHint':
+      'Runs the standard pipeline (with Ask-step JSON extraction) AND the VLM-direct JSON pipeline (qwen3-vl-instruct) in parallel, then unions and dedupes the two JSON outputs (substring match keeps the longer one). +10pp coverage on the 4-doc golden (79% vs 69%). Slower (~2x) and requires Ollama + qwen3-vl:8b-instruct.',
     'config.preprocessPdfDpi': 'PDF Preprocessing (DPI)',
     'config.preprocessPdfDpiHint':
       'DPI for preprocessing (0 = disabled, 300 = recommended for scanned docs)',

@@ -208,6 +208,21 @@ class AnalysisRepository(Protocol):
 
     async def delete_by_document(self, document_id: str) -> int: ...
 
+    async def fail_stale_running(self, *, older_than_seconds: int) -> int:
+        """Mark RUNNING jobs whose `created_at` is older than the threshold
+        as FAILED with a "stale" error message.
+
+        Called at startup to recover from container restarts that left
+        in-memory asyncio.Tasks behind a DB row stuck on RUNNING. The
+        underlying thread is gone (the container restarted), so the
+        in-memory task that would normally transition RUNNING → COMPLETED
+        / FAILED is never going to run again — we have to flip the
+        status ourselves.
+
+        Returns the count of jobs transitioned to FAILED.
+        """
+        ...
+
 
 @runtime_checkable
 class EmbeddingService(Protocol):

@@ -1,0 +1,27 @@
+You are a trade-shipping document analyst. Read the document below and extract every distinct entity.
+
+Output: a JSON ARRAY of objects (NOT a single object, NOT a flat dict, NOT wrapped in code fences). Each object in the array represents one logical "entity group" — usually a company paired with its address and any shipping/goods info that belongs to that company in context. One object per company.
+
+Each object has at most 4 keys, using exactly these names:
+- "Company Name"  — the legal/registered name of a company, bank, broker, agency, or organization. Include SHIPPER, CONSIGNEE, NOTIFY PARTY, CARRIER, ISSUING BANK, INSURER, AGENT, FREIGHT FORWARDER — every distinct company mentioned.
+- "Address"       — the postal/physical address of the company in the SAME object. Multi-line addresses joined with a single space. Do not list the same address twice.
+- "Shipping Information" — routing/transport details. For each leg/segment, format as: "From: <port/airport/code>, To: <port/airport/code>, Via: <vessel/flight name & number>, Date: <shipped-on-board date>". Combine one leg's details into ONE value. If a field is unknown for a leg, omit that field but still keep the key. Include the vessel name whenever present, even partial.
+- "Goods Description" — the product name ONLY. Strip:
+    * quantities (e.g. "250 BAGS", "20.000 CBM", "399 BAGS")
+    * codes (HS codes, FDA registration numbers, contract numbers, lot numbers, FLO ID, container numbers, seal numbers)
+    * weights and measurements
+    * certifications (OCIA, OCIA CERTIFIED CROP 2007, etc.)
+    * organization/company names that snuck in (LOGO COOPERATIVE COFFEES, etc.)
+    * logos and graphic text
+  Example: from "250 BAGS OF 69 KILOGRAMS NET EACH OF WASHED GREEN COFFEE PERUVIAN ALTURA EURO PREPARATION (E.P.) OCIA CERTIFIED CROP 2007" output ONLY "WASHED GREEN COFFEE PERUVIAN ALTURA EURO PREPARATION (E.P.)". One goods description per distinct product.
+
+Rules:
+- Output ONLY the JSON array. No markdown, no code fences, no preamble, no commentary.
+- Every value MUST be a plain string. No arrays, no nested objects, no nulls.
+- Each object MUST have a "Company Name" key. The other three keys are optional — include them only if that information is present in the document for that company.
+- Do not deduplicate companies. Include every distinct one, even if very similar.
+- Do not stop early. Continue listing objects until you have captured every distinct company/entity in the document.
+- Replace newlines inside values with a single space. Collapse multiple spaces to one.
+- For multi-page documents, process every page. Do not truncate mid-document.
+
+Document context: {context}

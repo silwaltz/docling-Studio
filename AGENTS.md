@@ -101,9 +101,19 @@ Docling Studio is a document analysis platform with FastAPI backend (hexagonal a
 
 ## User Preferences
 
-- **VLM Backend**: Default VLM backend is `ollama` (qwen3-vl:8b hosted on Ollama) instead of `granite` (in-process transformers). Users can select per-analysis via frontend UI or set globally via `VLM_BACKEND` env var.
+- **VLM Backend**: Default VLM backend is `ollama` (qwen3-vl:8b-instruct hosted on Ollama — note: NOT `qwen3-vl:8b`, which silently falls back to OCR) instead of `granite` (in-process transformers). Users can select per-analysis via frontend UI or set globally via `VLM_BACKEND` env var.
 - **VLM Output Mode** (Ollama only): `vlm_output_mode` ∈ {`json` (default, extract the four canonical sections), `markdown` (extract everything, preserve structure as MD)}. Selectable per-analysis in the dialog's VLM pipeline options, or globally via prompt env var override. When `markdown` is selected, the Ask LLM pipeline still receives the document as `content_markdown` (same path as the standard pipeline).
-- **Ask Feature**: System prompt configured to extract trade/shipping document data as JSON array with `section`, `field`, `value` structure. Frontend auto-detects and allows JSON download.
+- **Ask Feature**: System prompt configured to extract trade/shipping document data as a 4-section flat JSON object (`Company Name<n>`, `Address<n>`, `Shipping Information<n>`, `Goods Description<n>`). Frontend auto-detects and allows JSON download.
+- **Deep Extract** (NEW 2026-06-13, v3 update 2026-06-13): new `extract_mode` ∈ {`standard` (default), `deep`} on `PipelineOptions`. Deep mode runs standard + Ask-LLM + VLM-direct-JSON, then unions + dedupes the two `content_json` outputs (loose dedup — preserves PDF spelling/wording verbatim, never collapses via substring). Toggle in Parse tab > + New analysis dialog. Hidden when "Force VLM Pipeline" is on. **+18.8pp on the 4-doc golden (87.8% vs 69% standard+Ask)** — see `extracted-json/deep_extract__SHIPPED_REPORT.md` (v2 history) and `extracted-json/deep_extract__FULL_REPORT.md` (v3 13-doc test, all completed, no stuck jobs). Requires Ollama + `qwen3-vl:8b-instruct`. Artifacts (ask_raw / ask_json / vlm_json / merged) are persisted to `/app/data/deep_extract_artifacts/` per run.
+- **Stuck-job recovery** (NEW 2026-06-13): `main.py` `lifespan` sweeps RUNNING rows whose `created_at` is older than `2 * CONVERSION_TIMEOUT + 5min` and flips them to FAILED with an explanatory error message. The startup hook is wrapped in `try/except` so a sweep failure can never crash startup. `AnalysisResponse.is_stale` lets the UI flag stuck jobs in the race window before the next restart's sweep runs. See `domain/ports.py::AnalysisRepository.fail_stale_running`.
+
+## Known Stack Gotchas
+
+These are things that have bitten us and will bite again. Document once, never debug twice.
+
+- **`CHAT_MODEL_ID` env var is wrong in compose.** `docker-compose.yml` and `docker-compose.dev.yml` set `CHAT_MODEL_ID=gemma4:e4b` (no `-it-qat` suffix). Ollama only has `gemma4:e4b-it-qat`. The chat endpoint will return 404 from Ollama for every request unless either (a) the user types the correct model name in the Ask tab's model textbox, or (b) the request body includes `"model": "gemma4:e4b-it-qat"` explicitly. Fix the env var in compose, or accept the manual override.
+- **Gemma4 streaming drops wrapping `{ }` ~50% of the time** and uses two other quirks: `"key<1>"` with angle brackets instead of `"key1"`, and `"key"="value"` with `=` instead of `:`. Frontend's `extractJson` in `DocAskTab.vue` only handles the brace-less case. See `experiments/reparse-saved.py` for the full set of fallbacks if you need to recover all 14 cases.
+- **`\_` escapes in gemma4 output.** Spaces inside string values come back escaped as `\_`. Frontend has `cleanJsonForDownload` to strip them. Replicate in any offline parser.
 
 ## Child DOX Index
 

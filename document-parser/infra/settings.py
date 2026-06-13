@@ -76,10 +76,48 @@ class Settings:
     vlm_fallback_model: str = "GRANITEDOCLING_TRANSFORMERS"  # Default: Granite-Docling-258M
     # Ollama VLM model (used when vlm_backend="ollama")
     vlm_ollama_model: str = "qwen3-vl:8b"
-    # Ollama VLM prompt for document conversion
+    # Ollama VLM prompt for the JSON output mode (default). v1 — synced
+    # with the Ask-prompt rules in `api/chat._SYSTEM_PROMPT` so the
+    # deep-extract merge gets clean output from BOTH halves (VLM-direct
+    # + Ask-on-markdown). See `experiments/prompts/vlm_v1.txt` for the
+    # standalone copy used by offline scoring; this is the runtime
+    # default. Override with `VLM_OLLAMA_PROMPT`.
+    #
+    # v1 changes from the legacy v0 prompt:
+    #   - typo "Good Description" → "Goods Description" (matches Ask)
+    #   - explicit "no quantities / no codes / no certifications" rule
+    #     for Goods Description (was the dominant source of bad output
+    #     on scanned docs like NR_Doc13 — 38.5% → 76.9% with v1)
+    #   - explicit "single Address per entity, single-space-joined
+    #     multi-line addresses" rule
+    #   - explicit "From:/To:/Via:/Date:" structure for Shipping
+    #     Information, one key per leg (was the source of fragmented
+    #     shipping lines on dense multi-column pages)
+    #   - "do not stop early" / enumerate every distinct entity
+    #   - explicit "preserve the exact spelling from the document"
+    #     rule (was previously "correcting" OCR artefacts like
+    #     "Wilhelminakade" → "Wilhelmijnakade" — the user wants the
+    #     document's wording preserved verbatim, even if it looks
+    #     like a typo)
     vlm_ollama_prompt: str = (
         """
-        Extract information from this page and return JSON format: { "Company Name1": "value1", "Address1": "value1", "Shipping Information1": "value1", "Good Description1": "value1" } Only these four sections allowed. Add numbered rows as needed. No duplication. Return all company first, then address, then shipping information, then good description. Extract all addresses, company names, shipping information, and goods descriptions from the document. Return only valid JSON.
+        You are a trade-shipping document analyst reading a page image.
+
+        Output a single JSON object (NOT an array, NOT wrapped in code fences) with these exact key prefixes and a numeric suffix starting at 1:
+        - "Company Name<n>" = the legal/registered name of a company, bank, agency, broker, or organization that appears in the page. Include SHIPPER, CONSIGNEE, NOTIFY PARTY, CARRIER, ISSUING BANK, INSURER, AGENT, AGENCY — every company mentioned.
+        - "Address<n>" = a postal or physical address. Multi-line addresses get one Address<n> with single-space-joined lines. Map each address to the most relevant Company when possible (Shipper's address with the Shipper, Consignee's address with the Consignee, etc.). Don't list the same address twice for the same company.
+        - "Shipping Information<n>" = routing and transport details. For each leg/segment, include ALL of: "From: <port/airport/code>", "To: <port/airport/code>", "Via: <vessel/flight name & number>" (include vessel name when present, even partial), and "Date: <shipped-on-board date>" when present. Combine one leg's details into ONE Shipping Information<n> value, not separate keys. If a value is unknown for a leg, omit that field for that leg, not the whole key.
+        - "Goods Description<n>" = the product name only. NO quantities (e.g. "250 BAGS", "20.000 CBM", "399 BAGS"). NO codes (HS codes, FDA registration, FDA N, contract numbers, lot numbers, FLO ID, container numbers, seal numbers). NO logos, certifications, or organization names. NO weight or measurement. If a sentence like "250 BAGS OF 69 KILOGRAMS NET EACH OF WASHED GREEN COFFEE PERUVIAN ALTURA EURO PREPARATION (E.P.) OCIA CERTIFIED CROP 2007" appears, output ONLY "WASHED GREEN COFFEE PERUVIAN ALTURA EURO PREPARATION (E.P.)" (or the closest product-name phrase). One goods description per distinct product.
+
+        Rules:
+        - Output ONLY the JSON object. No markdown, no code fences, no preamble, no commentary.
+        - Every value MUST be a plain string (no arrays, no nested objects).
+        - Include every distinct company, address, shipping leg, and product. Do not deduplicate within a section.
+        - If a section has no entries, omit its keys entirely.
+        - Replace newlines inside values with a single space.
+        - Normalize whitespace: collapse multiple spaces to one.
+        - IMPORTANT: Do not stop early. Continue listing keys until you have captured every distinct entity in the document.
+        - CRITICAL: Preserve the exact spelling and wording from the document. Do NOT correct OCR artefacts, typos, or unusual spellings. If the page reads "Wilhelminakade", output "Wilhelminakade" — NOT the proper-Dutch "Wilhelmijnakade". If a name appears as "DUPONT CHEMICAL" (all caps) in the source, keep it all caps. The downstream merge may show multiple spelling variants side by side; the user's downstream validation uses the document's wording as ground truth, so a "corrected" value would be wrong.
         """
     )
     # Ollama VLM prompt used when vlm_output_mode="markdown". Asks the model

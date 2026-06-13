@@ -563,7 +563,15 @@ class TestAnalysisEndpointPipelineOptions:
         assert resp.status_code == 200
 
         opts = mock_svc.create.call_args.kwargs["pipeline_options"]
-        assert opts == payload["pipelineOptions"]
+        # The user-supplied options are forwarded verbatim; `ConversionOptions`
+        # may also carry other defaults (e.g. `extract_mode`, `vlm_backend`)
+        # added by later releases, so we only assert that every key the
+        # caller sent is preserved with the correct value.
+        for key, expected in payload["pipelineOptions"].items():
+            assert opts[key] == expected, f"{key}: expected {expected!r}, got {opts[key]!r}"
+        # Sanity: the assertion is non-vacuous — at least the user's keys
+        # are all there.
+        assert set(payload["pipelineOptions"]) <= set(opts)
 
     def test_invalid_pipeline_option_type_rejected(self, client, mock_svc):
         resp = client.post(

@@ -11,14 +11,18 @@ import functools
 import json
 import logging
 import math
+import re
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pypdfium2 as pdfium
 
+from api.chat import parse_ask_response, run_ask_extraction
 from domain.exceptions import InvalidLifecycleTransitionError
 from domain.models import AnalysisJob, AnalysisStatus
-from domain.services import classify_error, merge_results
+from domain.services import classify_error, merge_extractions, merge_results
 from domain.value_objects import (
     ChunkingOptions,
     ChunkResult,
@@ -559,7 +563,12 @@ class AnalysisService:
             logger.info("Analysis started: %s (file: %s)", job_id, filename)
 
             options = self._build_conversion_options(pipeline_options)
-            result = await self._run_conversion(job_id, file_path, options)
+            if options.extract_mode == "deep":
+                result = await self._run_deep_extract(
+                    job_id, file_path, filename, options
+                )
+            else:
+                result = await self._run_conversion(job_id, file_path, options)
             if result is None:
                 return  # job was deleted mid-batch
 
@@ -574,3 +583,156 @@ class AnalysisService:
         except Exception as e:
             logger.exception("Analysis failed: %s", job_id)
             await self._mark_failed(job_id, classify_error(e))
+
+    async def _run_deep_extract(
+        self,
+        job_id: str,
+        file_path: str,
+        filename: str,
+        options: ConversionOptions,
+    ) -> ConversionResult | None:
+        """Deep-Extract mode: run standard + VLM-direct JSON in sequence,
+        then union+dedup their content_json outputs.
+
+        Order of operations:
+          1. Standard pipeline (Docling layout/OCR/tables → markdown).
+             This is the analysis surface the user sees.
+          2. Ask step — call Ollama with the trade-shipping prompt against
+             the standard markdown. Parse the response with the same
+             brace-less / `<n>` / `=` fallbacks as `experiments/reparse-saved.py`.
+          3. VLM-direct JSON pipeline (qwen3-vl:8b-instruct → JSON).
+          4. Merge (Ask JSON, VLM JSON) via `merge_extractions` — keeps
+             the union of values, substring-equivalents collapse to the
+             longer one. See `extracted-json/merged__SHIPPED_REPORT.md`
+             for why this scores 79.2% vs 69% for standard+Ask alone.
+        """
+        job = await self._analysis_repo.find_by_id(job_id)
+        if not job:
+            return None
+        total_pages = _count_pdf_pages(file_path)
+        await self._analysis_repo.update_progress(job_id, 0, total_pages or 1)
+        logger.info(
+            "Deep extract: doc=%s job=%s — running standard pipeline first", job_id, filename
+        )
+
+        # 1) Standard pipeline (use the user-supplied pipeline options
+        #    but force standard mode so this is the markdown-producing
+        #    run, not a VLM-only run).
+        std_options = ConversionOptions(
+            **{**options.__dict__, "force_vlm_pipeline": False}
+        )
+        std_result = await self._run_conversion(job_id, file_path, std_options)
+        if std_result is None:
+            return None  # job deleted mid-run
+
+        await self._analysis_repo.update_progress(
+            job_id, total_pages or 1, (total_pages or 1) * 2
+        )
+
+        # 2) Ask step on the standard markdown. The Ask step is what
+        #    produces the Ask-JSON half of the merge. Failure here is
+        #    non-fatal — the VLM-json run still has independent coverage.
+        ask_json_str: str | None = None
+        if std_result.content_markdown:
+            ask_raw = await run_ask_extraction(std_result.content_markdown)
+            if ask_raw:
+                self._save_deep_extract_artifact(
+                    job_id, filename, "ask_raw", ask_raw
+                )
+                ask_json_str = parse_ask_response(ask_raw)
+                if ask_json_str:
+                    logger.info(
+                        "Deep extract: Ask step produced JSON (%d chars) for job %s",
+                        len(ask_json_str),
+                        job_id,
+                    )
+                else:
+                    logger.warning(
+                        "Deep extract: Ask step ran but produced no parseable JSON for job %s",
+                        job_id,
+                    )
+        else:
+            logger.warning(
+                "Deep extract: standard pipeline returned no markdown for job %s; "
+                "skipping Ask step",
+                job_id,
+            )
+
+        await self._analysis_repo.update_progress(
+            job_id, (total_pages or 1) + ((total_pages or 1) // 2), (total_pages or 1) * 2
+        )
+
+        # 3) VLM-direct JSON pipeline. Force the VLM-direct options
+        #    needed for a JSON extraction: VLM backend = ollama (remote
+        #    qwen3-vl), output mode = json. The user's choices for
+        #    vlm_backend / vlm_image_scale are honoured if set; we
+        #    only force vlm_output_mode to "json".
+        vlm_options = ConversionOptions(
+            **{
+                **options.__dict__,
+                "force_vlm_pipeline": True,
+                "vlm_output_mode": "json",
+                "vlm_backend": options.vlm_backend or "ollama",
+            }
+        )
+        logger.info(
+            "Deep extract: running VLM-direct JSON pipeline for job %s", job_id
+        )
+        vlm_result = await self._run_conversion(job_id, file_path, vlm_options)
+        if vlm_result is None:
+            return None  # job deleted mid-run
+        await self._analysis_repo.update_progress(
+            job_id, (total_pages or 1) * 2, (total_pages or 1) * 2
+        )
+
+        # 4) Merge. Save both individual JSONs as artifacts for debugging
+        #    alongside the merged one.
+        if vlm_result.content_json:
+            self._save_deep_extract_artifact(
+                job_id, filename, "vlm_json", vlm_result.content_json
+            )
+        if ask_json_str:
+            self._save_deep_extract_artifact(
+                job_id, filename, "ask_json", ask_json_str
+            )
+
+        merged_json = merge_extractions(ask_json_str, vlm_result.content_json)
+        if merged_json:
+            self._save_deep_extract_artifact(
+                job_id, filename, "merged", merged_json
+            )
+
+        # The final analysis surface is the standard pipeline's output
+        # (markdown / html / pages / document_json) so the rest of the
+        # system (chunks, ingestion, search) sees a single coherent
+        # document. Only content_json is replaced with the merged blob.
+        return ConversionResult(
+            page_count=std_result.page_count,
+            content_markdown=std_result.content_markdown,
+            content_html=std_result.content_html,
+            pages=std_result.pages,
+            skipped_items=std_result.skipped_items,
+            document_json=std_result.document_json,
+            content_json=merged_json,
+        )
+
+    def _save_deep_extract_artifact(
+        self, job_id: str, filename: str, kind: str, content: str
+    ) -> None:
+        """Persist a deep-extract intermediate (ask_raw, vlm_json, etc.)
+        next to the experiment outputs for offline debugging.
+
+        The path mirrors `experiments/ask_v1__<hash>__<slug>.raw.txt` so
+        anyone reading those files knows where to look for the
+        production pipeline's raw outputs. Best-effort: a failed write
+        does NOT fail the analysis.
+        """
+        try:
+            artifacts_dir = Path("/app/data/deep_extract_artifacts")
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            slug = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)[:80] or "doc"
+            ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+            path = artifacts_dir / f"{kind}__{job_id}__{slug}__{ts}.txt"
+            path.write_text(content, encoding="utf-8")
+        except Exception:
+            logger.debug("Could not write deep-extract artifact", exc_info=True)

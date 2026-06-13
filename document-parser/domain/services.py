@@ -252,6 +252,11 @@ def _merge_content_json(results):
     `VLM_JSON_SECTIONS` (e.g. "Company Name<n>", "Address<n>",
     "Shipping Information<n>", "Goods Description<n>", "Phone<n>", "Fax<n>").
     Re-bucket by section, dedupe, and renumber.
+
+    Dedup is **exact-match only** (see `_dedup_exact_only` for the
+    rationale). Per-batch VLM calls sometimes produce the same value
+    in multiple batches; we keep one. Whitespace and case variants
+    are also collapsed.
     """
     import json
     sections = {name: [] for name in VLM_JSON_SECTIONS}
@@ -274,24 +279,107 @@ def _merge_content_json(results):
                 continue
             for prefix in ordered:
                 if key.startswith(prefix):
-                    sections[prefix].append(value)
+                    if value is not None:
+                        s = str(value).strip()
+                        if s:
+                            sections[prefix].append(s)
                     break
     merged = {}
     for section_name in VLM_JSON_SECTIONS:
-        seen = set()
-        counter = 1
-        for value in sections[section_name]:
-            if value is None:
+        deduped = _dedup_exact_only(sections[section_name])
+        for i, v in enumerate(deduped, start=1):
+            merged[f"{section_name}{i}"] = v
+    if not merged:
+        return None
+    return json.dumps(merged, indent=2, ensure_ascii=False)
+
+
+def merge_extractions(*json_blobs: str | None) -> str | None:
+    """Merge two or more 4-section JSON extractions into a single canonical JSON.
+
+    Used by the "Deep Extract" mode: standard-pipeline+Ask JSON and
+    VLM-direct JSON for the same document are unioned by section.
+
+    Dedup strategy (v2, 2026-06-13): **exact-match only**. Two values
+    are considered duplicates only when they normalise to the same
+    string (case-insensitive, whitespace-collapsed). Substring variants
+    (e.g. "FLUID LIMITED" vs "FLUID LIMITED, KAWASAKI",
+    "Wilhelminakade" vs "Wilhelmijnakade") are kept as SEPARATE
+    entries — losing one is worse than keeping a near-duplicate. The
+    downstream `content_json` is a flat record so users can decide
+    which value to trust; the merge's job is to PRESERVE, not to
+    NORMALISE.
+
+    Returns the merged JSON as a string, or None if nothing was extractable.
+    """
+    import json
+
+    sections: dict[str, list[str]] = {name: [] for name in VLM_JSON_SECTIONS}
+    ordered = sorted(VLM_JSON_SECTIONS, key=len, reverse=True)
+
+    for blob in json_blobs:
+        if not blob:
+            continue
+        try:
+            data = json.loads(blob)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key, value in data.items():
+            if not isinstance(key, str):
                 continue
-            s = str(value).strip()
-            if not s:
-                continue
-            normalized = s.lower()
-            if normalized in seen:
-                continue
-            seen.add(normalized)
-            merged[f"{section_name}{counter}"] = s
-            counter += 1
+            for prefix in ordered:
+                if key.startswith(prefix):
+                    if value is not None:
+                        s = str(value).strip()
+                        if s:
+                            sections[prefix].append(s)
+                    break
+
+    return _finalise_merged_sections(sections)
+
+
+def _normalise_for_dedup(s: str) -> str:
+    """Whitespace-collapse + lowercase for the exact-match check."""
+    return " ".join(s.split()).lower()
+
+
+def _dedup_exact_only(values: list[str]) -> list[str]:
+    """Exact-match dedup only — preserve substring and case variants.
+
+    Two values are considered duplicates iff their normalised form
+    (lowercase + whitespace-collapsed) is identical. Everything else
+    is kept as a separate entry, preserving first-seen order. This
+    is the v2 strategy (2026-06-13); the v1 substring/longer-wins
+    logic dropped legitimate data (e.g. address fragments that the
+    VLM and Ask disagreed on), so the bar for "duplicate" was raised
+    to exact-only. Some duplication is acceptable; missing data is
+    not.
+    """
+    kept: list[str] = []
+    kept_n: list[str] = []
+    for v in values:
+        nv = _normalise_for_dedup(v)
+        if not nv:
+            continue
+        if nv in kept_n:
+            continue
+        kept.append(v)
+        kept_n.append(nv)
+    return kept
+
+
+def _finalise_merged_sections(sections: dict[str, list[str]]) -> str | None:
+    """Dedup each section (exact-match only) and renumber to
+    `<Section>1..N`. Returns the JSON string or None when empty."""
+    import json
+
+    merged: dict[str, str] = {}
+    for section_name in VLM_JSON_SECTIONS:
+        deduped = _dedup_exact_only(sections[section_name])
+        for i, v in enumerate(deduped, start=1):
+            merged[f"{section_name}{i}"] = v
     if not merged:
         return None
     return json.dumps(merged, indent=2, ensure_ascii=False)

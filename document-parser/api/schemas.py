@@ -112,6 +112,12 @@ class AnalysisResponse(_CamelModel):
     started_at: str | datetime | None = None
     completed_at: str | datetime | None = None
     created_at: str | datetime
+    # True when the job is still RUNNING but its `created_at` is older
+    # than the deployment's `2 * conversion_timeout + 300` window. The
+    # backend `fail_stale_running` sweep will transition it to FAILED
+    # on the next startup, but until then the UI can show a "stuck"
+    # indicator so the user knows their job is not actually progressing.
+    is_stale: bool = False
 
 
 class PipelineOptionsRequest(BaseModel):
@@ -182,6 +188,16 @@ class PipelineOptionsRequest(BaseModel):
             "or 'markdown' (extract everything, preserve structure as markdown)."
         ),
     )
+    extract_mode: str = Field(
+        default="standard",
+        validation_alias=AliasChoices("extract_mode", "extractMode"),
+        description=(
+            "Extraction strategy. 'standard' (default) runs a single "
+            "pipeline (standard or VLM-direct, per force_vlm_pipeline). "
+            "'deep' runs BOTH standard and VLM-direct, then unions+dedupes "
+            "their JSON extractions. Higher coverage, ~2x runtime."
+        ),
+    )
 
     @field_validator("preprocess_pdf_dpi")
     @classmethod
@@ -209,6 +225,13 @@ class PipelineOptionsRequest(BaseModel):
     def validate_vlm_output_mode(cls, v: str) -> str:
         if v not in ("json", "markdown"):
             raise ValueError("vlm_output_mode must be 'json' or 'markdown'")
+        return v
+
+    @field_validator("extract_mode")
+    @classmethod
+    def validate_extract_mode(cls, v: str) -> str:
+        if v not in ("standard", "deep"):
+            raise ValueError("extract_mode must be 'standard' or 'deep'")
         return v
 
     @field_validator("table_mode")

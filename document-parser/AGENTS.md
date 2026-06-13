@@ -15,7 +15,12 @@ Backend team owns all Python code, API contracts, database schema, and service o
 - **API contract**: REST with camelCase JSON (Pydantic), snake_case internally
 - **Database**: SQLite via aiosqlite, schema in `persistence/database.py`
 - **Conversion modes**: `local` (in-process Docling) or `remote` (Docling Serve HTTP)
-- **Testing**: pytest with 377+ tests, all must pass before merge
+- **Extraction modes** (`extract_mode` on `PipelineOptionsRequest`):
+  - `"standard"` (default) — single pipeline (standard or VLM-direct per `force_vlm_pipeline`).
+  - `"deep"` — runs standard + Ask-LLM + VLM-direct-JSON, unions the two `content_json` outputs. See `domain/services.merge_extractions`. The standard's markdown/html remains the analysis surface.
+- **Chat/extract quirks**: Gemma 4 (the Ask model) drops the wrapping `{ }` ~50% of the time, uses `key<1>` angle brackets, and uses `=` as separator. `api/chat.parse_ask_response` handles all three. Use it in any code path that parses Ask output.
+- **Stuck-job recovery**: a container restart (or `asyncio.wait_for` timeout on `asyncio.to_thread`) clears the in-memory `asyncio.Task` but leaves the DB row at RUNNING. On startup, `main.py`'s `lifespan` calls `analysis_repo.fail_stale_running(older_than_seconds=2*conversion_timeout+300)` to flip stale RUNNING rows to FAILED. `AnalysisResponse.is_stale` lets the UI flag stuck jobs before the next sweep runs.
+- **Testing**: pytest with 416+ tests, all must pass before merge
 - **DDD granularity**: One route ≈ one domain operation (see `docs/design/269-backend-ddd-audit.md`)
 
 ## Work Guidance
@@ -46,3 +51,9 @@ pytest tests/ -v
 - `persistence/` - SQLite repositories
 - `infra/` - Infrastructure adapters (converters, chunker, settings)
 - `tests/` - pytest test suite
+
+## Cross-references
+
+- Deep-Extract scoring: `extracted-json/deep_extract__SHIPPED_REPORT.md`
+- Ask-prompt tuning: `experiments/prompt-runs/FINAL_REPORT.md`
+

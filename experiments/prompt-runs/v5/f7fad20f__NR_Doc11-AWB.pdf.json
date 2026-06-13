@@ -1,0 +1,22 @@
+[
+  {
+    "Company Name": [
+      "SWIFT TRANSPORTATION LTD.",
+      "HONGKONG AIRLINES",
+      "ALISTED JAPAN LTD."
+    ],
+    "Address": [
+      "HOUSE NO:79 (1ST FLOOR), ROAD NO:06, BLOCK-C BANANI, DHAKA, BANGLADESH.",
+      "7th Floor, One Citygate, 20 Tat Tung, Tung Chung, Lantau, Hong Kong.",
+      "6F-HIRAKAWA-CHO DAITCHI SEIMI BLDG, 1-2-10 HIRAKAWA-CHO, CHIYODA-KU, TOKYO 102-0093, JAPAN.",
+      "DHAKA, BANGLADESH"
+    ],
+    "Shipping Information": [
+      "From: DHAKA, To: HONG KONG, Via: HX, Date: [Unknown]",
+      "From: HONG KONG, To: NARITA, Via: HX-9062, Date: 03.04.2017"
+    ],
+    "Goods Description": [
+      "READYMADE GARMENTS."
+    ]
+  }
+]

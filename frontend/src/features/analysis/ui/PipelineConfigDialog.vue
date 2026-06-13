@@ -23,6 +23,26 @@
                 >?
               </span>
             </div>
+
+            <!-- Deep Extract: standard + VLM-json in parallel, merged. -->
+            <div v-if="!local.force_vlm_pipeline" class="config-toggle-row">
+              <label class="toggle-label">
+                <input
+                  type="checkbox"
+                  v-model="local.extract_mode"
+                  true-value="deep"
+                  false-value="standard"
+                  class="toggle-input"
+                  data-e2e="deep-extract-toggle"
+                />
+                <span class="toggle-switch" />
+                <span class="toggle-text">{{ t('config.deepExtract') }}</span>
+              </label>
+              <span class="config-hint">
+                <span class="config-tooltip">{{ t('config.deepExtractHint') }}</span
+                >?
+              </span>
+            </div>
           </div>
 
           <!-- Standard pipeline options -->
@@ -142,6 +162,7 @@ const DEFAULT_OPTIONS: PipelineOptions = {
   vlm_backend: '',
   vlm_image_scale: 4,
   vlm_output_mode: 'json',
+  extract_mode: 'standard',
 }
 
 const local = reactive<PipelineOptions>({ ...DEFAULT_OPTIONS })

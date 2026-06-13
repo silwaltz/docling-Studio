@@ -1,0 +1,310 @@
+{
+  "name": "v3",
+  "model": "gemma4:e4b-it-qat",
+  "aggregate_avg_hit_rate": 0.7596153846153846,
+  "per_doc": [
+    {
+      "doc_id": "05a9fb62-8bb1-4b06-bd3b-bdd081da777b",
+      "filename": "NR Doc13-Insurancepolicy.pdf",
+      "score": {
+        "total_golden": 13,
+        "hits": [
+          {
+            "section": "Company Name",
+            "field": "TT Club Mutual Insurance",
+            "value": "",
+            "search_key": "TT Club Mutual Insurance",
+            "search_key_lower": "tt club mutual insurance",
+            "found_in": "Company Name"
+          },
+          {
+            "section": "Company Name",
+            "field": "Thomas Miller BV.",
+            "value": "",
+            "search_key": "Thomas Miller BV",
+            "search_key_lower": "thomas miller bv",
+            "found_in": "Company Name (prefix)"
+          },
+          {
+            "section": "Company Name",
+            "field": "CARGILL AGRICOLA SA,",
+            "value": "",
+            "search_key": "CARGILL AGRICOLA SA",
+            "search_key_lower": "cargill agricola sa",
+            "found_in": "Company Name"
+          },
+          {
+            "section": "Company Name",
+            "field": "VISCOFAN TECHNOLOGY (SUZHOU)CO.LTD,",
+            "value": "",
+            "search_key": "VISCOFAN TECHNOLOGY (SUZHOU)CO.LTD",
+            "search_key_lower": "viscofan technology (suzhou)co.ltd",
+            "found_in": "Company Name (prefix)"
+          },
+          {
+            "section": "Company Name",
+            "field": "TT Club",
+            "value": "",
+            "search_key": "TT Club",
+            "search_key_lower": "tt club",
+            "found_in": "Company Name"
+          },
+          {
+            "section": "Company Name",
+            "field": "THOMAS MILLER",
+            "value": "",
+            "search_key": "THOMAS MILLER",
+            "search_key_lower": "thomas miller",
+            "found_in": "Company Name"
+          },
+          {
+            "section": "Address",
+            "field": "AV DOUTOR CHUCRI ZAIDAN 1240 ANDAR 6 AO 9 VILA SAO FRANCISCO SAO PAULO BRAZIL 4711130.,",
+            "value": "",
+            "search_key": "AV DOUTOR CHUCRI ZAIDAN 1240 ANDAR 6 AO 9 VILA SAO FRANCISCO SAO PAULO BRAZIL 4711130",
+            "search_key_lower": "av doutor chucri zaidan 1240 andar 6 ao 9 vila sao francisco sao paulo brazil 4711130",
+            "found_in": "Address (prefix)"
+          },
+          {
+            "section": "Shipping Information",
+            "field": "CHINA",
+            "value": "",
+            "search_key": "CHINA",
+            "search_key_lower": "china",
+            "found_in": "Address"
+          },
+          {
+            "section": "Shipping Information",
+            "field": "MAERSK LA PAZ",
+            "value": "",
+            "search_key": "MAERSK LA PAZ",
+            "search_key_lower": "maersk la paz",
+            "found_in": "Company Name"
+          },
+          {
+            "section": "Goods Description",
+            "field": "WHITE REFINED SUGAR ICUMSA 45",
+            "value": "",
+            "search_key": "WHITE REFINED SUGAR ICUMSA 45",
+            "search_key_lower": "white refined sugar icumsa 45",
+            "found_in": "Goods Description"
+          }
+        ],
+        "misses": [
+          {
+            "section": "Address",
+            "field": "Withelminakade 953 A, 3072 AP Rotterdam,  The Netherlands",
+            "value": "",
+            "search_key": "Withelminakade 953 A, 3072 AP Rotterdam, The Netherlands",
+            "search_key_lower": "withelminakade 953 a, 3072 ap rotterdam, the netherlands"
+          },
+          {
+            "section": "Address",
+            "field": "NO.8 SHUILANG STREET,SUZHOU INDUSTRIAL PARK,SUZHOU INDUSTRIAL PARK,JIANGSU,CHINA CHINA.215122,",
+            "value": "",
+            "search_key": "NO.8 SHUILANG STREET,SUZHOU INDUSTRIAL PARK,SUZHOU INDUSTRIAL PARK,JIANGSU,CHINA CHINA.215122",
+            "search_key_lower": "no.8 shuilang street,suzhou industrial park,suzhou industrial park,jiangsu,china china.215122"
+          },
+          {
+            "section": "Shipping Information",
+            "field": "SANTOS PORT.BRAZIL,",
+            "value": "",
+            "search_key": "SANTOS PORT.BRAZIL",
+            "search_key_lower": "santos port.brazil"
+          }
+        ],
+        "hit_rate": 0.7692307692307693
+      },
+      "meta": {
+        "model": "gemma4:e4b-it-qat",
+        "total_duration": 13312910200,
+        "load_duration": 223991400,
+        "prompt_eval_count": 1954,
+        "eval_count": 1294,
+        "elapsed_sec": 13.33
+      }
+    },
+    {
+      "doc_id": "12757426-a8d6-4f9c-aa9b-81c4ce16eb2d",
+      "filename": "NR Doc2-invoice.pdf",
+      "score": {
+        "total_golden": 8,
+        "hits": [
+          {
+            "section": "Company",
+            "field": "FLUID LIMITED",
+            "value": "Shipper",
+            "search_key": "FLUID LIMITED",
+            "search_key_lower": "fluid limited",
+            "found_in": "Company Name1"
+          },
+          {
+            "section": "Company Address",
+            "field": "11-UEONIO STREET, TRIPOLI, LIBYA",
+            "value": "",
+            "search_key": "11-UEONIO STREET, TRIPOLI, LIBYA",
+            "search_key_lower": "11-ueonio street, tripoli, libya",
+            "found_in": "Address2"
+          },
+          {
+            "section": "Company",
+            "field": "HSBC",
+            "value": "Bank",
+            "search_key": "HSBC",
+            "search_key_lower": "hsbc",
+            "found_in": "Company Name4"
+          },
+          {
+            "section": "Shipping Route",
+            "field": "Port of Felixstowe",
+            "value": "Route 1 - Port of Loading",
+            "search_key": "Port of Felixstowe",
+            "search_key_lower": "port of felixstowe",
+            "found_in": "Shipping Information1"
+          },
+          {
+            "section": "Shipping Route",
+            "field": "TRIPOLI PORT LIBYA",
+            "value": "Route 1 - Port of Discharge",
+            "search_key": "TRIPOLI PORT LIBYA",
+            "search_key_lower": "tripoli port libya",
+            "found_in": "Shipping Information1"
+          },
+          {
+            "section": "Goods",
+            "field": "DOORES AND WINDOWS ACCESORY",
+            "value": "2.000,00",
+            "search_key": "DOORES AND WINDOWS ACCESORY",
+            "search_key_lower": "doores and windows accesory",
+            "found_in": "Goods Description1"
+          }
+        ],
+        "misses": [
+          {
+            "section": "Company Address",
+            "field": "Fluid Centre, 120 Pinehurst Road, Farnborough, KU12 7VG, United Kingdom",
+            "value": "",
+            "search_key": "Fluid Centre, 120 Pinehurst Road, Farnborough, KU12 7VG, United Kingdom",
+            "search_key_lower": "fluid centre, 120 pinehurst road, farnborough, ku12 7vg, united kingdom"
+          },
+          {
+            "section": "Company",
+            "field": "THE LIBYAN RUSSIAN UKRANIAN SPECIALIZED CENTER",
+            "value": "Consignee",
+            "search_key": "THE LIBYAN RUSSIAN UKRANIAN SPECIALIZED CENTER",
+            "search_key_lower": "the libyan russian ukranian specialized center"
+          }
+        ],
+        "hit_rate": 0.75
+      },
+      "meta": {
+        "model": "gemma4:e4b-it-qat",
+        "total_duration": 8704917200,
+        "load_duration": 222202600,
+        "prompt_eval_count": 1237,
+        "eval_count": 843,
+        "elapsed_sec": 8.72
+      }
+    }
+  ],
+  "all_results": [
+    {
+      "doc_id": "6fd84e8a-129c-4df8-b21a-b996076c4eda",
+      "filename": "NR Doc1 (FULL)(LC,Inv,BL,AWB, insurance policy).pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "81a98503-9843-4ab7-a611-50c9f084755b",
+      "filename": "NR Doc10-AWB.pdf",
+      "has_json": true,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "f7fad20f-398f-4dab-a676-fe3b1120c8bf",
+      "filename": "NR Doc11-AWB.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "ed67c755-bcec-42a8-961e-1a0a6ce2801a",
+      "filename": "NR Doc12-AWB.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "05a9fb62-8bb1-4b06-bd3b-bdd081da777b",
+      "filename": "NR Doc13-Insurancepolicy.pdf",
+      "has_json": true,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "12757426-a8d6-4f9c-aa9b-81c4ce16eb2d",
+      "filename": "NR Doc2-invoice.pdf",
+      "has_json": true,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "4e9a393f-e9cd-46c4-a635-f902cf857aca",
+      "filename": "NR Doc3-invoice.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "d2957ab9-9fb7-47dd-a95c-f510dbbe532f",
+      "filename": "NR Doc4-invoice.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "fdfdd720-98e7-4e85-a95d-264a2c96e5e6",
+      "filename": "NR Doc5-BL.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "0830694b-d1b5-4f1b-ac24-3b084e83aec0",
+      "filename": "NR Doc6-BL.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "9659b216-d15b-40ac-aef0-a43f0b0c5f57",
+      "filename": "NR Doc6-BL.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "4271139b-0636-44a0-bb74-7e3d0f62614f",
+      "filename": "NR Doc7-BL.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "ea0d8279-ee67-4297-a60e-8dfbe2d143ba",
+      "filename": "NR Doc8-BL.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    },
+    {
+      "doc_id": "ece039d5-9cdc-4dd1-871c-95a87f016dc3",
+      "filename": "NR Doc9-AWB.pdf",
+      "has_json": false,
+      "error": null,
+      "parsed_error": null
+    }
+  ]
+}

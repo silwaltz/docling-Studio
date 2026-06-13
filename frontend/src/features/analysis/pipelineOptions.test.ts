@@ -170,6 +170,27 @@ describe('useAnalysisStore — pipeline options forwarding', () => {
     store.stopPolling()
   })
 
+  it('run() forwards extract_mode deep', async () => {
+    const job = { id: 'j1', status: 'PENDING', documentId: 'd1' }
+    api.createAnalysis.mockResolvedValue(job)
+    api.fetchAnalysis.mockResolvedValue({ ...job, status: 'COMPLETED' })
+
+    const store = useAnalysisStore()
+    const opts = {
+      do_ocr: true,
+      force_vlm_pipeline: false,
+      extract_mode: 'deep' as const,
+    }
+    await store.run('d1', opts)
+
+    expect(api.createAnalysis).toHaveBeenCalledWith(
+      'd1',
+      { do_ocr: true, force_vlm_pipeline: false, extract_mode: 'deep' },
+      null,
+    )
+    store.stopPolling()
+  })
+
   it('run() sets running state even with pipeline options', async () => {
     const job = { id: 'j1', status: 'PENDING', documentId: 'd1' }
     api.createAnalysis.mockResolvedValue(job)

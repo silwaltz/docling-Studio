@@ -254,6 +254,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # through a service.
     app.state.analysis_repo = analysis_repo
     app.state.document_repo = document_repo
+
+    # Stuck-job recovery: a container restart (or a hard timeout) clears
+    # the in-memory `asyncio.Task` dict but leaves the DB row at RUNNING.
+    # The original task is never going to run again, so on the next
+    # startup we sweep those rows: a job is "stale" when it has been in
+    # RUNNING for longer than `2 * conversion_timeout + 5min` (i.e. the
+    # user can never be waiting on it; it would have finished or
+    # timed out long ago). We flip the status to FAILED with an
+    # explanatory message so the UI shows a clean Failed state and the
+    # user can retry.
+    stale_threshold = 2 * settings.conversion_timeout + 300
+    logger.info(
+        "Stale-job recovery sweep starting (threshold=%ds = 2*conversion_timeout + 5min)",
+        stale_threshold,
+    )
+    try:
+        recovered = await analysis_repo.fail_stale_running(
+            older_than_seconds=stale_threshold,
+        )
+        if recovered:
+            logger.warning(
+                "Recovered %d stale RUNNING analysis job(s) "
+                "(threshold=%ds = 2*conversion_timeout + 5min)",
+                recovered,
+                stale_threshold,
+            )
+        else:
+            logger.info("Stale-job recovery sweep: no stale jobs found")
+    except Exception:  # startup must not crash on a stuck-job sweep failure
+        logger.exception("Stale-job recovery sweep failed; continuing startup")
     app.state.neo4j = await _init_neo4j()
     # Wrap the env-based driver in the `GraphWriter` port adapter so the
     # service layer never touches the raw driver (#audit-01). None when

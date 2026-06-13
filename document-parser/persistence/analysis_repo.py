@@ -166,3 +166,28 @@ class SqliteAnalysisRepository:
             )
             await db.commit()
             return cursor.rowcount
+
+    async def fail_stale_running(self, *, older_than_seconds: int) -> int:
+        """Mark RUNNING jobs whose `created_at` is older than the threshold
+        as FAILED.
+
+        See the docstring on the protocol for rationale: a container
+        restart clears the in-memory `asyncio.Task` dict but leaves the
+        DB row at RUNNING. On the next startup we sweep those rows so
+        the user sees a clean Failed state and can retry.
+
+        Uses `datetime('now', '-N seconds')` so the comparison happens
+        in SQL and is timezone-independent (storage is UTC ISO).
+        """
+        async with get_connection() as db:
+            cursor = await db.execute(
+                """UPDATE analysis_jobs
+                   SET status = 'FAILED',
+                       error_message = 'Stale RUNNING — server restarted before the analysis finished. Retry the analysis.',
+                       completed_at = ?
+                   WHERE status = 'RUNNING'
+                     AND created_at < datetime('now', ? || ' seconds')""",
+                (str(datetime.now(UTC)), -int(older_than_seconds)),
+            )
+            await db.commit()
+            return cursor.rowcount

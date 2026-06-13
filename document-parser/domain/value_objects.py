@@ -126,6 +126,16 @@ class ConversionOptions:
     #              document structure as markdown. The full markdown goes
     #              into content_markdown; no content_json is produced.
     vlm_output_mode: str = "json"
+    # Deep-Extract mode ("deep"): run BOTH the standard pipeline (with
+    # Ask-step JSON extraction) AND the VLM-direct JSON pipeline, then
+    # union+dedup their content_json outputs. Strictly higher coverage
+    # on the trade-shipping golden set (79.2% vs 69% for standard+Ask
+    # alone; see extracted-json/merged__SHIPPED_REPORT.md). Defaults
+    # to "standard" — preserves the prior single-pipeline behaviour.
+    # When "deep", the standard pipeline runs first (its markdown/html
+    # become the analysis surfaces) and the VLM-json run is added as a
+    # second conversion. Both content_json blobs are merged.
+    extract_mode: str = "standard"
 
     def is_default(self) -> bool:
         """Return True if all options match their defaults."""

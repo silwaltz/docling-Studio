@@ -250,3 +250,114 @@ class TestAnalysisRepo:
 
         all_jobs = await analysis_repo.find_all()
         assert len(all_jobs) == 0
+
+
+class TestFailStaleRunning:
+    """Sweep RUNNING jobs whose `created_at` is older than the threshold
+    and flip them to FAILED.
+
+    Background: a container restart clears the in-memory `asyncio.Task`
+    dict but leaves the DB row at RUNNING. The original task is never
+    going to run again, so on the next startup we sweep those rows.
+    """
+
+    async def _insert_doc(self, document_repo):
+        doc = Document(
+            id="doc-1",
+            filename="test.pdf",
+            content_type="application/pdf",
+            file_size=1024,
+            storage_path="/tmp/test.pdf",
+            lifecycle_state=DocumentLifecycleState.UPLOADED,
+        )
+        await document_repo.insert(doc)
+
+    async def _make_running_job(self, analysis_repo, *, age_seconds: int) -> AnalysisJob:
+        from datetime import timedelta
+
+        job = AnalysisJob(id="job-stale", document_id="doc-1")
+        job.status = AnalysisStatus.RUNNING
+        # Backdate `created_at` so the job is "older than" the threshold.
+        job.created_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
+        await analysis_repo.insert(job)
+        return job
+
+    async def test_marks_old_running_as_failed(self, document_repo, analysis_repo):
+        await self._insert_doc(document_repo)
+        await self._make_running_job(analysis_repo, age_seconds=3600)  # 1h old
+
+        recovered = await analysis_repo.fail_stale_running(older_than_seconds=300)
+        assert recovered == 1
+
+        # The job now reports FAILED with the explanatory error message.
+        stale = await analysis_repo.find_by_id("job-stale")
+        assert stale is not None
+        assert stale.status == AnalysisStatus.FAILED
+        assert stale.error_message is not None
+        assert "Stale" in stale.error_message
+        # `completed_at` is set so the UI knows the job reached a terminal
+        # state and the row stops looking "in progress" at a glance.
+        assert stale.completed_at is not None
+
+    async def test_keeps_fresh_running_untouched(self, document_repo, analysis_repo):
+        await self._insert_doc(document_repo)
+        await self._make_running_job(analysis_repo, age_seconds=10)  # 10s old
+
+        recovered = await analysis_repo.fail_stale_running(older_than_seconds=300)
+        assert recovered == 0
+
+        running = await analysis_repo.find_by_id("job-stale")
+        assert running is not None
+        assert running.status == AnalysisStatus.RUNNING
+        assert running.error_message is None
+
+    async def test_does_not_touch_completed_jobs(self, document_repo, analysis_repo):
+        await self._insert_doc(document_repo)
+        # 1h-old COMPLETED job — must not be touched.
+        from datetime import timedelta
+
+        job = AnalysisJob(id="job-done", document_id="doc-1")
+        job.status = AnalysisStatus.COMPLETED
+        job.created_at = datetime.now(UTC) - timedelta(seconds=3600)
+        job.completed_at = datetime.now(UTC) - timedelta(seconds=3500)
+        await analysis_repo.insert(job)
+
+        recovered = await analysis_repo.fail_stale_running(older_than_seconds=300)
+        assert recovered == 0
+
+        done = await analysis_repo.find_by_id("job-done")
+        assert done is not None
+        assert done.status == AnalysisStatus.COMPLETED
+        assert done.error_message is None
+
+    async def test_threshold_boundary_uses_age(self, document_repo, analysis_repo):
+        """Threshold is interpreted as 'older than N seconds' — boundary
+        jobs (exactly N seconds old) should NOT be swept, and a job
+        that's N+1 seconds old SHOULD be swept.
+        """
+        await self._insert_doc(document_repo)
+
+        # Insert three RUNNING jobs with distinct ids at different ages.
+        from datetime import timedelta
+
+        def _job(job_id: str, age_seconds: int) -> AnalysisJob:
+            j = AnalysisJob(id=job_id, document_id="doc-1")
+            j.status = AnalysisStatus.RUNNING
+            j.created_at = datetime.now(UTC) - timedelta(seconds=age_seconds)
+            return j
+
+        for jid, age in (("job-boundary", 300), ("job-just-over", 301), ("job-old", 600)):
+            await analysis_repo.insert(_job(jid, age))
+
+        recovered = await analysis_repo.fail_stale_running(older_than_seconds=300)
+        assert recovered == 2  # the 301s-old one and the 600s-old one
+
+        # The boundary job (exactly 300s old) is still RUNNING.
+        boundary = await analysis_repo.find_by_id("job-boundary")
+        assert boundary is not None
+        assert boundary.status == AnalysisStatus.RUNNING
+        # Both older jobs are FAILED.
+        for job_id in ("job-just-over", "job-old"):
+            swept = await analysis_repo.find_by_id(job_id)
+            assert swept is not None
+            assert swept.status == AnalysisStatus.FAILED, f"{job_id} should be FAILED"

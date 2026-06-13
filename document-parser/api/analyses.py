@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/analyses", tags=["analyses"])
 
 
+# Per-deployment threshold for marking a RUNNING job "stale" in the API
+# response. Mirrors the threshold used by the startup `fail_stale_running`
+# sweep in `main.py`: a job is stale if its `created_at` is older than
+# `2 * conversion_timeout + 5min` (i.e. the user can never be waiting on
+# it; it would have finished or timed out long ago). Computed at import
+# time so the router doesn't reach into `infra.settings` on every call.
+def _stale_threshold_seconds() -> int:
+    from infra.settings import settings
+    return 2 * settings.conversion_timeout + 300
+
+
 def _get_service(request: Request) -> AnalysisService:
     return request.app.state.analysis_service
 
@@ -28,17 +39,34 @@ def _get_service(request: Request) -> AnalysisService:
 ServiceDep = Annotated[AnalysisService, Depends(_get_service)]
 
 
-def _to_response(job) -> AnalysisResponse:
+def _to_response(job, *, stale_after_seconds: int | None = None) -> AnalysisResponse:
+    """Convert an AnalysisJob to its API response shape.
+
+    `stale_after_seconds` lets the router pass a per-deployment
+    threshold (computed from settings.conversion_timeout). A job is
+    "stale" if it's still RUNNING and its `created_at` is older than
+    the threshold — that means the in-memory asyncio.Task that would
+    normally transition it to COMPLETED/FAILED is gone (server
+    restarted) and the deployment's `fail_stale_running` sweep has
+    not yet been able to mark it FAILED.
+    """
+    from datetime import UTC, datetime
+
+    is_stale = False
+    if stale_after_seconds and job.status.value == "RUNNING" and job.created_at:
+        age = (datetime.now(UTC) - job.created_at).total_seconds()
+        if age > stale_after_seconds:
+            is_stale = True
     return AnalysisResponse(
         id=job.id,
         document_id=job.document_id,
         document_filename=job.document_filename,
         status=job.status.value,
         content_markdown=job.content_markdown,
- content_html=job.content_html,
- content_json=job.content_json,
- pages_json=job.pages_json,
- chunks_json=job.chunks_json,
+        content_html=job.content_html,
+        content_json=job.content_json,
+        pages_json=job.pages_json,
+        chunks_json=job.chunks_json,
         has_document_json=job.document_json is not None,
         error_message=job.error_message,
         progress_current=job.progress_current,
@@ -46,6 +74,7 @@ def _to_response(job) -> AnalysisResponse:
         started_at=str(job.started_at) if job.started_at else None,
         completed_at=str(job.completed_at) if job.completed_at else None,
         created_at=str(job.created_at),
+        is_stale=is_stale,
     )
 
 
@@ -72,7 +101,7 @@ async def create_analysis(body: CreateAnalysisRequest, service: ServiceDep) -> A
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    return _to_response(job)
+    return _to_response(job, stale_after_seconds=_stale_threshold_seconds())
 
 
 @router.get("", response_model=list[AnalysisResponse])
@@ -85,7 +114,8 @@ async def list_analyses(
         jobs = await service.find_by_document(document_id)
     else:
         jobs = await service.find_all()
-    return [_to_response(j) for j in jobs]
+    threshold = _stale_threshold_seconds()
+    return [_to_response(j, stale_after_seconds=threshold) for j in jobs]
 
 
 @router.get("/{analysis_id}", response_model=AnalysisResponse)
@@ -94,7 +124,7 @@ async def get_analysis(analysis_id: str, service: ServiceDep) -> AnalysisRespons
     job = await service.find_by_id(analysis_id)
     if not job:
         raise HTTPException(status_code=404, detail="Analysis not found")
-    return _to_response(job)
+    return _to_response(job, stale_after_seconds=_stale_threshold_seconds())
 
 
 @router.post("/{analysis_id}/rechunk", response_model=list[ChunkResponse])
