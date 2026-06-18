@@ -136,12 +136,39 @@ class Settings:
         - Output Markdown only. Do not wrap it in a code fence. Do not add commentary before or after.
         """
     )
-    # Max tokens for Ollama VLM output (qwen3-vl:8b supports up to 262k context)
-    # 131072 tokens (128k) ≈ 96,000 words, enough for very dense multi-page documents
-    # Higher resolution images need more tokens to describe
-    vlm_ollama_max_tokens: int = 131072
-    # Timeout for remote VLM API calls (seconds)
-    vlm_remote_timeout: int = 3600
+    # Max tokens for Ollama VLM context window (num_ctx). The qwen3-vl:8b
+    # model supports up to 262k, but for the trade-shipping JSON extraction
+    # task the prompt + expected output is well under 16k. Keeping the
+    # context window tight caps memory usage and — more importantly —
+    # gives runaway generations less runway before they hit the limit.
+    # See memory docling-studio/deep-extract-v3 (2026-06-18) for why.
+    vlm_ollama_max_tokens: int = 16384
+    # Max output tokens per Ollama VLM call. The four-section JSON output
+    # for a single page is normally a few hundred tokens; 4096 leaves 10x
+    # headroom for dense multi-column pages without giving the model
+    # unlimited runway to run away on dense pages (doc1's pages 6-10 used
+    # to generate 17k-42k+ tokens without EOS — see deep-extract-v3).
+    vlm_ollama_max_output_tokens: int = 4096
+    # Per-call timeout for the Ollama VLM HTTP request (seconds). A normal
+    # page completes in 60-80s; 600s (10 min) gives a 5x cushion while
+    # still bounding a runaway request. Previously defaulted to 3600s (1h)
+    # which let runaway generations run for nearly the full CONVERSION_TIMEOUT.
+    vlm_remote_timeout: int = 600
+    # Stop sequences passed to Ollama. **Empty by default** because Ollama's
+    # stop-token matcher doesn't understand JSON-string scoping — it stops at
+    # the FIRST occurrence in the output stream, even if that `}` lives
+    # inside a string value. The 2026-06-18 attempt to use `("}",)` here
+    # truncated every valid-JSON output from qwen3-vl on doc1 because
+    # strings like "PO NUMBER" → "PO NUMBER }" hit the stop early. If you
+    # want to enable stops for a non-JSON output mode, set the env var to a
+    # comma-separated list of strings your model will emit only at EOS.
+    vlm_ollama_stop_sequences: tuple[str, ...] = ()
+    # Defensive cap on the response string length collected by the VLM HTTP
+    # patch. Even if Ollama ignores max_tokens and runs away, the patch
+    # truncates at this character count and emits a warning. Should be
+    # ~8x the normal per-page JSON length (normal ~2-3k chars) but well
+    # below what an unbounded runaway could produce (62k+ chars observed).
+    vlm_ollama_response_char_cap: int = 32000
     # Page-image render scale fed to the VLM model.
     # 2.0 = balanced quality/speed for most documents
     # 4.0 = very high detail but requires more tokens and processing time
@@ -206,6 +233,35 @@ class Settings:
             errors.append(f"vlm_remote_timeout must be > 0 (got {self.vlm_remote_timeout})")
         if self.vlm_ollama_max_tokens <= 0:
             errors.append(f"vlm_ollama_max_tokens must be > 0 (got {self.vlm_ollama_max_tokens})")
+        if self.vlm_ollama_max_tokens > 262144:
+            errors.append(
+                f"vlm_ollama_max_tokens must be <= 262144 (qwen3-vl:8b context cap), "
+                f"got {self.vlm_ollama_max_tokens}"
+            )
+        if self.vlm_ollama_max_output_tokens <= 0:
+            errors.append(
+                f"vlm_ollama_max_output_tokens must be > 0 "
+                f"(got {self.vlm_ollama_max_output_tokens})"
+            )
+        if self.vlm_ollama_max_output_tokens > self.vlm_ollama_max_tokens:
+            errors.append(
+                f"vlm_ollama_max_output_tokens ({self.vlm_ollama_max_output_tokens}) "
+                f"must be <= vlm_ollama_max_tokens (num_ctx, {self.vlm_ollama_max_tokens})"
+            )
+        if self.vlm_ollama_response_char_cap <= 0:
+            errors.append(
+                f"vlm_ollama_response_char_cap must be > 0 "
+                f"(got {self.vlm_ollama_response_char_cap})"
+            )
+        # stop_sequences: must be a tuple of non-empty strings. The frozen
+        # dataclass annotation already pins the type, but a user could still
+        # pass an empty string; reject at validation time.
+        for seq in self.vlm_ollama_stop_sequences:
+            if not isinstance(seq, str) or not seq:
+                errors.append(
+                    f"vlm_ollama_stop_sequences entries must be non-empty strings, "
+                    f"got {seq!r}"
+                )
         if not self.vlm_ollama_prompt.strip():
             errors.append("vlm_ollama_prompt must not be empty")
         if not self.vlm_ollama_markdown_prompt.strip():
@@ -302,8 +358,21 @@ class Settings:
                     """
                 )
             ),
-            vlm_ollama_max_tokens=int(os.environ.get("VLM_OLLAMA_MAX_TOKENS", "131072")),
-            vlm_remote_timeout=int(os.environ.get("VLM_REMOTE_TIMEOUT", "3600")),
+            vlm_ollama_max_tokens=int(os.environ.get("VLM_OLLAMA_MAX_TOKENS", "16384")),
+            vlm_ollama_max_output_tokens=int(
+                os.environ.get("VLM_OLLAMA_MAX_OUTPUT_TOKENS", "4096")
+            ),
+            vlm_remote_timeout=int(os.environ.get("VLM_REMOTE_TIMEOUT", "600")),
+            # Comma-separated list of stop strings; empty by default — see
+            # the field docstring for why we don't use `}` for JSON output.
+            vlm_ollama_stop_sequences=tuple(
+                s.strip()
+                for s in os.environ.get("VLM_OLLAMA_STOP_SEQUENCES", "").split(",")
+                if s.strip()
+            ),
+            vlm_ollama_response_char_cap=int(
+                os.environ.get("VLM_OLLAMA_RESPONSE_CHAR_CAP", "32000")
+            ),
             vlm_image_scale=float(os.environ.get("VLM_IMAGE_SCALE", "2.0")),
             # 0.6.1 — Surface flags (#257).
             studio_mode_enabled=os.environ.get("STUDIO_MODE_ENABLED", "false").lower()

@@ -362,15 +362,34 @@ def parse_ask_response(raw: str) -> str | None:
 def _sanitize_ask_values(obj) -> str | None:
     """Coerce every value in the parsed Ask response to a string.
 
-    Gemma 4 (and other small models) occasionally emit a value as a
-    Python-dict literal or list instead of a flat string — e.g.
-    `{"To": "CHINA"}` instead of `"To: CHINA"`. The Deep-Extract
-    merge contract requires string-only values (the merge logic and
-    the downstream `content_json` schema both assume `str`), so
-    flatten any non-string value to a `key: value; key: value`
-    representation before serialising. Returns None if the dict is
-    empty. Accepts either a dict or a list (other shapes are rejected
-    by the caller before this is called).
+    Gemma 4 (and other small models) emit three shapes that need
+    normalising:
+
+    1. ``{"To": "CHINA"}`` — single-key dict value. Flatten to
+       ``"To: CHINA"`` so the merge contract holds (every value is
+       a flat string).
+    2. ``{"Company Name": {"Company Name1": "A", "Company Name2": "B"}}``
+       — NESTED SECTION. The outer key is the section name (matches
+       one of the four canonical prefixes) and the inner dict is the
+       list of per-section entries. This MUST be flattened to
+       top-level keys ``"Company Name1": "A", "Company Name2": "B"``
+       so the downstream merge (which buckets by key prefix) sees the
+       entries individually — otherwise they all collapse into a
+       single concatenated value under ``"Company Name1"``.
+    3. Lists, ints, None — stringify.
+
+    The naive pre-fix behaviour (always ``"; ".join(inner.items())``)
+    silently corrupted shape 2 by emitting
+    ``"Company Name1: A; Company Name2: B"`` as the value of
+    ``"Company Name1"``, dropping the per-entry structure that
+    ``merge_extractions`` depends on. The 2026-06-18 regression that
+    surfaced this came from the VLM-direct runaway-defense fix: when
+    VLM-direct fails to parse, the merged result falls back to the
+    Ask JSON, which exposed the Ask-side bug.
+
+    Returns None if the input is empty or not a dict. The list path
+    is rejected because the merge contract expects a flat dict of
+    string values.
     """
     if isinstance(obj, list):
         # Brace-less/array responses are not in the schema we want;
@@ -384,9 +403,35 @@ def _sanitize_ask_values(obj) -> str | None:
         if isinstance(v, str):
             cleaned[k] = v
         elif isinstance(v, dict):
-            # Flatten `{"To": "CHINA"}` → `"To: CHINA"`.
-            parts = [f"{ik}: {iv}" for ik, iv in v.items() if iv is not None]
-            cleaned[k] = "; ".join(parts) if parts else str(v)
+            # Distinguish "section dict" (inner keys match the outer
+            # key as a prefix) from "single-value dict" (inner keys
+            # are unrelated). The trade-shipping prompt produces the
+            # former; the gemma4 quirk test produces the latter
+            # ({"To": "CHINA"}).
+            #
+            # The check is per-inner-key: a single-entry section like
+            # ``{"Company Name": {"Company Name1": "X"}}`` is still a
+            # section wrapper (the inner key shares the outer prefix)
+            # and must be promoted to a top-level key, not kept as
+            # ``"Company Name": "Company Name1: X"``.
+            inner_keys_match_section = all(
+                isinstance(ik, str) and ik.startswith(k) for ik in v
+            )
+            if inner_keys_match_section:
+                # Section dict: flatten by promoting inner entries to
+                # top-level keys. The merge logic (merge_extractions)
+                # buckets by key-prefix, so per-entry keys are what
+                # downstream consumers expect.
+                for inner_k, inner_v in v.items():
+                    if inner_v is None:
+                        continue
+                    cleaned[str(inner_k)] = str(inner_v).strip()
+            else:
+                # Single-value dict: flatten to "key: value" string
+                # for the parent key. This is the original behaviour
+                # covered by test_dict_value_flattened_to_string.
+                parts = [f"{ik}: {iv}" for ik, iv in v.items() if iv is not None]
+                cleaned[k] = "; ".join(parts) if parts else str(v)
         elif isinstance(v, list):
             cleaned[k] = ", ".join(str(x) for x in v)
         else:

@@ -34,6 +34,71 @@ from docling.pipeline.vlm_pipeline import VlmPipeline
 import logging
 _patch_logger = logging.getLogger(__name__)
 
+def _truncate_runaway_response(
+    text: str,
+    char_cap: int,
+    mode: str,
+) -> tuple[str, bool]:
+    """Cap a runaway VLM response at ``char_cap`` characters.
+
+    The qwen3-vl-8b-instruct model has been observed to enumerate fields
+    without ever emitting `}` on dense multi-page content (doc1's pages
+    6-10 generated 17k-42k+ tokens without EOS — see deep-extract-v3
+    memory, 2026-06-18). ``max_tokens`` is the primary defense, but this
+    is a defensive net for the case where Ollama ignores the limit or
+    the context window itself becomes the limit.
+
+    Strategy:
+      1. If the response is under the cap, return as-is.
+      2. Otherwise, look for the last ``}`` in the prefix (a balanced
+         JSON-object terminator — if we find one, the model at least
+         closed one full object before running away). Truncate there.
+      3. If no ``}`` exists in the prefix (model never wrote one),
+         hard-truncate at the cap and append ``}`` so the downstream
+         parser sees a syntactically closed string and fails cleanly
+         instead of looping on an unterminated blob.
+
+    Args:
+        text: The runaway response text.
+        char_cap: Maximum allowed character length.
+        mode: ``"json"`` or ``"markdown"`` — used only for the warning
+            message; truncation logic is identical.
+
+    Returns:
+        ``(truncated_text, was_runaway)``. ``was_runaway`` is True iff
+        the input was over the cap and got truncated.
+    """
+    if len(text) <= char_cap:
+        return text, False
+
+    head = text[:char_cap]
+    last_brace = head.rfind("}")
+    if last_brace >= 0:
+        # Cut at the last complete object boundary. The slice is
+        # exclusive of the brace index, so +1 to include it.
+        truncated = head[: last_brace + 1]
+        _patch_logger.warning(
+            "🔧 RUNAWAY VLM response (mode=%s, original_len=%d > cap=%d): "
+            "truncated to last balanced '}' at offset %d (final_len=%d)",
+            mode, len(text), char_cap, last_brace, len(truncated),
+        )
+        return truncated, True
+
+    # No `}` in the head — the model never emitted one. Hard-truncate
+    # and append `}` so the downstream parser at least sees a closed
+    # string. The result will fail to parse as JSON (and probably also
+    # as markdown), but it stops an unbounded runaway from being
+    # collected verbatim into the deep-extract artifact.
+    truncated = head + "}"
+    _patch_logger.warning(
+        "🔧 RUNAWAY VLM response (mode=%s, original_len=%d > cap=%d): "
+        "no balanced '}' found in head, hard-truncated + appended '}' "
+        "(final_len=%d)",
+        mode, len(text), char_cap, len(truncated),
+    )
+    return truncated, True
+
+
 def _apply_vlm_debug_patch():
     """Apply minimal logging patch to VLM engine to debug qwen3-vl."""
     try:
@@ -46,6 +111,9 @@ def _apply_vlm_debug_patch():
         # structure-preserving markdown mode (set by the caller before the
         # run). The caller picks which list to consume in `_convert_sync`.
         page_responses = {'jsons': [], 'markdowns': []}
+        # Per-page runaway counters so we can summarise at end-of-run
+        # without re-scanning every response.
+        runaway_stats = {'count': 0, 'total_truncated_chars': 0}
 
         # Patch at the lowest level - the actual HTTP request
         import requests
@@ -84,6 +152,47 @@ def _apply_vlm_debug_patch():
                             _patch_logger.info(f"🔧 Content preview: {content[:200]}")
                         else:
                             _patch_logger.warning(f"🔧 CONTENT IS EMPTY!")
+
+                        # Runaway defense: cap the response before storage
+                        # so an unbounded Ollama response (model ignored
+                        # max_tokens, or hit the context window) cannot
+                        # bloat the deep-extract artifact or block the
+                        # downstream merge parser. The cap is configurable
+                        # via VLM_OLLAMA_RESPONSE_CHAR_CAP.
+                        if actual_response:
+                            mode_now = page_responses.get('mode', 'json')
+                            truncated, was_runaway = _truncate_runaway_response(
+                                actual_response,
+                                settings.vlm_ollama_response_char_cap,
+                                mode_now,
+                            )
+                            if was_runaway:
+                                runaway_stats['count'] += 1
+                                runaway_stats['total_truncated_chars'] += (
+                                    len(actual_response) - len(truncated)
+                                )
+                                _patch_logger.warning(
+                                    "🔧 RUNAWAY on page %d (mode=%s): "
+                                    "trimmed %d -> %d chars (cap=%d). "
+                                    "If this fires repeatedly, lower "
+                                    "VLM_OLLAMA_MAX_OUTPUT_TOKENS or "
+                                    "sharpen VLM_OLLAMA_PROMPT to bound "
+                                    "the entity list.",
+                                    page_counter['current'], mode_now,
+                                    len(actual_response), len(truncated),
+                                    settings.vlm_ollama_response_char_cap,
+                                )
+                                # If the truncation happened after the
+                                # reasoning→content fix-up above, the
+                                # patched result._content is now stale
+                                # (still encodes the runaway). Re-patch.
+                                if not content and reasoning:
+                                    response_data['choices'][0]['message']['content'] = truncated
+                                    fixed_json = json.dumps(response_data)
+                                    result._content = fixed_json.encode('utf-8')
+                                    if hasattr(result, '_json'):
+                                        delattr(result, '_json')
+                                actual_response = truncated
 
                         # Store the actual response. The caller decides which
                         # bucket (json vs markdown) is the live one for the
@@ -138,6 +247,7 @@ def _apply_vlm_debug_patch():
         # Store references for reset and retrieval
         logged_api_request._page_counter = page_counter
         logged_api_request._page_responses = page_responses
+        logged_api_request._runaway_stats = runaway_stats
 
         api_module.api_image_request = logged_api_request
         
@@ -471,15 +581,54 @@ def _build_ollama_vlm_converter(options: ConversionOptions | None = None) -> Doc
             settings.vlm_ollama_model, image_scale, output_mode,
         )
         logger.info(f"Ollama URL: {ollama_url}")
-        logger.info(f"Max tokens: {settings.vlm_ollama_max_tokens}, Timeout: {settings.vlm_remote_timeout}s")
+        # Log the runaway-prevention knobs up front so a stuck run can be
+        # diagnosed from the converter-build log line alone.
+        logger.info(
+            "VLM safety knobs: num_ctx=%d, max_output_tokens=%d, timeout=%ds, "
+            "stop_sequences=%r, response_char_cap=%d",
+            settings.vlm_ollama_max_tokens,
+            settings.vlm_ollama_max_output_tokens,
+            settings.vlm_remote_timeout,
+            settings.vlm_ollama_stop_sequences,
+            settings.vlm_ollama_response_char_cap,
+        )
+
+        # Runaway-prevention params:
+        # - max_tokens caps the OUTPUT length per call. qwen3-vl:8b-instruct
+        #   on dense multi-page content has been observed to enumerate fields
+        #   without ever emitting `}` (17k-42k+ tokens without EOS on doc1
+        #   pages 6-10, see deep-extract-v3 memory). 4096 caps normal runs
+        #   at ~16k chars (well above the 500-1000 chars a clean run needs)
+        #   while bounding a runaway at ~16k chars.
+        # - num_ctx caps the CONTEXT window. Keeping this tight (vs the
+        #   131k we used to allow) gives runaway generations less runway
+        #   before they hit the model's own context limit.
+        #
+        # NOTE on stop sequences: the first attempt at this fix passed
+        # `stop=["}"]` to terminate JSON cleanly. That backfired — Ollama
+        # matches the stop string at the *first* occurrence in the output
+        # (no JSON-string-aware scoping), so it stopped on a `}` that
+        # happened to appear inside a string value, truncating otherwise
+        # valid JSON mid-stream. All 12 per-page VLM responses on the
+        # post-fix doc1 run failed to parse with "Expecting ',' delimiter"
+        # / "Unterminated string" errors. The HTTP-patch char-cap is the
+        # safer last-line defense; we leave stop_sequences configurable
+        # for operators who want to experiment, but don't enable by default.
+        vlm_params: dict = {
+            "model": settings.vlm_ollama_model,
+            "max_tokens": settings.vlm_ollama_max_output_tokens,
+            "num_ctx": settings.vlm_ollama_max_tokens,
+        }
+        if settings.vlm_ollama_stop_sequences:
+            # Ollama's /v1/chat/completions accepts `stop` as a string or
+            # list of strings. ApiVlmOptions forwards params verbatim.
+            # See the note above — enabling this without testing against
+            # your model is likely to corrupt valid JSON.
+            vlm_params["stop"] = list(settings.vlm_ollama_stop_sequences)
 
         vlm_options = ApiVlmOptions(
             url=ollama_url,
-            params={
-                "model": settings.vlm_ollama_model,
-                "max_tokens": settings.vlm_ollama_max_tokens,
-                "num_ctx": settings.vlm_ollama_max_tokens,  # Context window size
-            },
+            params=vlm_params,
             prompt=prompt,
             timeout=settings.vlm_remote_timeout,
             scale=image_scale,
@@ -596,6 +745,46 @@ def _get_vlm_page_responses(output_mode: str) -> list[str]:
     except Exception as exc:
         logger.warning("Failed to read VLM page responses: %s", exc)
     return []
+
+
+def _get_vlm_runaway_stats() -> dict:
+    """Read back the runaway-detection counters for the current document run.
+
+    Returns a dict with ``count`` (number of pages whose response was
+    truncated) and ``total_truncated_chars`` (sum of removed characters
+    across all truncated pages). Both are 0 on a clean run.
+
+    Used by ``_convert_sync`` to emit a single summary log line per
+    document when a runaway was caught. Tests can call this directly
+    without spinning up the converter.
+    """
+    try:
+        import docling.utils.api_image_request as api_module
+        if hasattr(api_module.api_image_request, "_runaway_stats"):
+            stats = api_module.api_image_request._runaway_stats
+            return {
+                "count": stats["count"],
+                "total_truncated_chars": stats["total_truncated_chars"],
+            }
+    except Exception as exc:
+        logger.warning("Failed to read VLM runaway stats: %s", exc)
+    return {"count": 0, "total_truncated_chars": 0}
+
+
+def _reset_vlm_runaway_stats() -> None:
+    """Zero out the runaway counters at the start of each document run.
+
+    Mirrors ``_set_vlm_response_mode`` — both are called together by
+    ``_convert_sync`` right before kicking off a VLM-direct conversion.
+    """
+    try:
+        import docling.utils.api_image_request as api_module
+        if hasattr(api_module.api_image_request, "_runaway_stats"):
+            stats = api_module.api_image_request._runaway_stats
+            stats["count"] = 0
+            stats["total_truncated_chars"] = 0
+    except Exception as exc:
+        logger.warning("Failed to reset VLM runaway stats: %s", exc)
 
 
 def _merge_vlm_json_pages(page_jsons: list[str]) -> str:
@@ -1169,6 +1358,9 @@ def _convert_sync(
             except Exception as e:
                 logger.warning(f"Could not reset VLM counter: {e}")
             _set_vlm_response_mode(options.vlm_output_mode or "json")
+            # Zero the runaway counters so each document run gets a fresh
+            # summary. Cheap; called only on the VLM-direct path.
+            _reset_vlm_runaway_stats()
 
         kwargs: dict = {}
         if settings.max_page_count > 0:
@@ -1251,6 +1443,23 @@ def _convert_sync(
             md_preview,
             json_preview,
         )
+
+        # Runaway summary: if any per-page response exceeded the cap, emit
+        # a single summary line so a stuck run is diagnosable from the
+        # end-of-document log even if individual page warnings scrolled
+        # past. Per-page warnings are still emitted at truncation time.
+        runaway_stats = _get_vlm_runaway_stats()
+        if runaway_stats["count"] > 0:
+            logger.warning(
+                "VLM runaway summary: %d page(s) truncated, "
+                "total %d chars removed (cap=%d). "
+                "If this fires repeatedly on the same document, "
+                "tighten VLM_OLLAMA_PROMPT to bound the entity list or "
+                "lower VLM_OLLAMA_MAX_OUTPUT_TOKENS.",
+                runaway_stats["count"],
+                runaway_stats["total_truncated_chars"],
+                settings.vlm_ollama_response_char_cap,
+            )
 
         # Degenerate VLM output: the granite-docling model sometimes classifies
         # the whole page as a single <picture> (common for colored forms / Air

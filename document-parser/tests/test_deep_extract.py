@@ -19,8 +19,7 @@ from domain.services import (
     merge_extractions,
 )
 from domain.value_objects import ConversionOptions, ConversionResult, PageDetail
-from services.analysis_service import AnalysisConfig, AnalysisService
-
+from services.analysis_service import AnalysisService
 
 # ---------------------------------------------------------------------------
 # merge_extractions
@@ -256,6 +255,76 @@ class TestParseAskResponse:
         # Every value is a plain string (not a dict / list).
         for v in parsed.values():
             assert isinstance(v, str), f"non-string value: {v!r}"
+
+    def test_nested_section_dict_promoted_to_top_level_keys(self):
+        """Gemma 4 sometimes wraps a section in an outer key — e.g.
+        ``{"Company Name": {"Company Name1": "A", "Company Name2": "B"}}``.
+        The sanitizer must promote the inner entries to TOP-LEVEL keys,
+        not concatenate them into a single ``Company Name1`` value (the
+        pre-fix behaviour, which corrupted the merge contract).
+
+        Regression from 2026-06-18: VLM-direct runaway-defense fix made
+        VLM fail to parse, exposing this latent Ask bug because the
+        merged result fell back to the Ask JSON.
+        """
+        raw = (
+            '{"Company Name":'
+            '{"Company Name1": "BANQUE POPULAIRE ATLANTIQUE",'
+            '"Company Name2": "DBS BANK (HONG KONG) LIMITED",'
+            '"Company Name3": "SNC ONE SAS"},'
+            '"Address":'
+            '{"Address1": "194 RUE CHOLETAISE EN MAUGES FRANCE",'
+            '"Address2": "10/F DA DA INDUSTRIAL BUIDLING HONG KONG"}}'
+        )
+        out = parse_ask_response(raw)
+        parsed = json.loads(out)
+        # Inner entries are promoted to top-level keys, NOT concatenated.
+        assert parsed == {
+            "Company Name1": "BANQUE POPULAIRE ATLANTIQUE",
+            "Company Name2": "DBS BANK (HONG KONG) LIMITED",
+            "Company Name3": "SNC ONE SAS",
+            "Address1": "194 RUE CHOLETAISE EN MAUGES FRANCE",
+            "Address2": "10/F DA DA INDUSTRIAL BUIDLING HONG KONG",
+        }
+        # The outer section key MUST NOT survive — otherwise the merge
+        # would bucket its value into Company Name1 (single-key collapse).
+        assert "Company Name" not in parsed
+        assert "Address" not in parsed
+        for v in parsed.values():
+            assert isinstance(v, str), f"non-string value: {v!r}"
+
+    def test_nested_dict_with_single_inner_key_still_concatenates(self):
+        """Edge case: if the inner dict has only ONE key matching the
+        section prefix, the original single-value-dict behaviour applies
+        (the dict is most likely a single-value quirk like
+        ``{"To": "CHINA"}``, not a section wrapper — but here it has the
+        outer key as prefix, so we still treat it as section-level).
+
+        Documenting this so the two branches don't diverge silently if
+        someone refactors the heuristic later.
+        """
+        raw = (
+            '{"Company Name":'
+            '{"Company Name1": "ONLY ENTRY"}}'
+        )
+        out = parse_ask_response(raw)
+        parsed = json.loads(out)
+        # Single-entry section is still promoted to a top-level key.
+        assert parsed == {"Company Name1": "ONLY ENTRY"}
+
+    def test_unrelated_dict_value_still_uses_semicolon_format(self):
+        """Sanity: an inner dict whose keys DON'T share the outer-key
+        prefix (i.e. the gemma4 single-value-dict quirk ``{"To": "CHINA"}``)
+        must keep using the `;`-joined string format."""
+        raw = (
+            '{"Shipping Information1":'
+            '{"From": "HONG KONG", "To": "LE HAVRE"}}'
+        )
+        out = parse_ask_response(raw)
+        parsed = json.loads(out)
+        assert parsed == {
+            "Shipping Information1": "From: HONG KONG; To: LE HAVRE",
+        }
 
 
 # ---------------------------------------------------------------------------
