@@ -50,6 +50,29 @@ class Settings:
     llm_provider_type: str = "ollama"
     ollama_host: str = "http://localhost:11434"
     reasoning_model_id: str = "gpt-oss:20b"  # matches docling-agent's example_05
+    # Chat/ASK pipeline backend. Independent from `llm_provider_type`
+    # because the chat endpoint has zero heavy deps (httpx only) and can
+    # speak either Ollama's native NDJSON or OpenAI Chat Completions
+    # (SSE) without touching docling-agent.
+    #
+    # "ollama" — call {ollama_host}/api/chat (default; current behavior)
+    # "openai" — call {openai_base_url}/chat/completions (works with vLLM
+    #            running its built-in OpenAI server, or OpenAI's public
+    #            API, etc.)
+    chat_provider: str = "ollama"
+    # OpenAI Chat-Completions-compatible base URL. vLLM serves this at
+    # http://<host>:8000/v1 by default. The trailing `/v1` is required —
+    # the chat endpoint appends `/chat/completions` to it.
+    openai_base_url: str = "http://localhost:8000/v1"
+    # Optional Bearer token for OpenAI-compatible backends that require
+    # auth. vLLM ignores this; OpenAI's public API requires it.
+    openai_api_key: str = ""
+    # Override the VLM HTTP endpoint directly. Empty = keep using
+    # {ollama_host}/v1/chat/completions (current default — works with
+    # Ollama because Ollama exposes OpenAI-compat at the same path).
+    # Set this to e.g. http://localhost:8001/v1/chat/completions when
+    # vLLM is serving the VLM model on a different port.
+    vlm_openai_url: str = ""
     # Document Q&A chat — direct Ollama /api/chat call using the document's
     # extracted markdown as context. No heavy deps required beyond httpx.
     # Set CHAT_ENABLED=true and CHAT_MODEL_ID to a model already pulled in Ollama.
@@ -229,6 +252,19 @@ class Settings:
             errors.append(
                 f"vlm_backend must be 'ollama' or 'granite' (got '{self.vlm_backend}')"
             )
+        if self.chat_provider not in ("ollama", "openai"):
+            errors.append(
+                f"chat_provider must be 'ollama' or 'openai' (got '{self.chat_provider}')"
+            )
+        if not self.openai_base_url:
+            errors.append("openai_base_url must not be empty")
+        if self.vlm_openai_url and not (
+            self.vlm_openai_url.startswith("http://")
+            or self.vlm_openai_url.startswith("https://")
+        ):
+            errors.append(
+                f"vlm_openai_url must be an http(s) URL (got '{self.vlm_openai_url}')"
+            )
         if self.vlm_remote_timeout <= 0:
             errors.append(f"vlm_remote_timeout must be > 0 (got {self.vlm_remote_timeout})")
         if self.vlm_ollama_max_tokens <= 0:
@@ -323,6 +359,12 @@ class Settings:
             llm_provider_type=os.environ.get("LLM_PROVIDER_TYPE", "ollama"),
             ollama_host=os.environ.get("OLLAMA_HOST", "http://localhost:11434"),
             reasoning_model_id=os.environ.get("REASONING_MODEL_ID", "gpt-oss:20b"),
+            chat_provider=os.environ.get("CHAT_PROVIDER", "ollama").lower(),
+            openai_base_url=os.environ.get(
+                "OPENAI_BASE_URL", "http://localhost:8000/v1"
+            ).rstrip("/"),
+            openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+            vlm_openai_url=os.environ.get("VLM_OPENAI_URL", "").rstrip("/"),
             chat_enabled=os.environ.get("CHAT_ENABLED", "true").lower()
             in ("1", "true", "yes", "on"),
             chat_model_id=os.environ.get("CHAT_MODEL_ID", "gemma4:e4b"),

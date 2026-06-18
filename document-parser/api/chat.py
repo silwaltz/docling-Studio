@@ -142,6 +142,99 @@ async def _stream_ollama(
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
 
+async def _stream_openai_chat(
+    messages: list[dict],
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    num_predict: int = 8_192,
+):
+    """Generator that streams SSE-formatted events from an OpenAI-compatible
+    Chat Completions endpoint (e.g. vLLM serving gemma4:e4b-it-qat).
+
+    Translates the upstream SSE event shape (``data: {"choices":[{"delta":...}]}``
+    with a terminating ``data: [DONE]``) into the same frontend-facing event
+    shape used by ``_stream_ollama``:
+
+        {"delta": "..."}        — incremental token
+        {"done": true, ...}     — final summary
+        {"error": "..."}        — error (stream ends)
+
+    Keeping the event shape identical means the Ask tab UI doesn't need to
+    know which backend is in play — it just consumes ``evt.delta`` /
+    ``evt.done`` regardless.
+
+    `num_predict` defaults to 8k (was 96k for the Ollama path) because vLLM
+    deployments typically cap `max_model_len` at 32k or 64k — leaving 96k
+    for output is a footgun that fails the request. 8k is plenty for the
+    Ask-prompt JSON extraction (which is normally a few hundred to a few
+    thousand tokens) and keeps the prompt budget roomy.
+    """
+    url = f"{base_url.rstrip('/')}/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "max_tokens": num_predict,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    total_tokens = 0
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                if resp.status_code != 200:
+                    body = await resp.aread()
+                    error_text = body.decode(errors="replace")[:200]
+                    yield f"data: {json.dumps({'error': f'OpenAI-compatible backend returned {resp.status_code}: {error_text}'})}\n\n"
+                    return
+
+                async for raw_line in resp.aiter_lines():
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if not line or line == "[DONE]":
+                        if line == "[DONE]":
+                            yield f"data: {json.dumps({'done': True, 'model': model, 'total_tokens': total_tokens})}\n\n"
+                            return
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if evt.get("error"):
+                        err = evt["error"]
+                        if isinstance(err, dict):
+                            err = err.get("message") or json.dumps(err)
+                        yield f"data: {json.dumps({'error': str(err)})}\n\n"
+                        return
+                    for choice in evt.get("choices") or []:
+                        delta = (choice.get("delta") or {}).get("content") or ""
+                        if delta:
+                            total_tokens += 1
+                            yield f"data: {json.dumps({'delta': delta})}\n\n"
+                        if choice.get("finish_reason"):
+                            # The upstream OpenAI stream doesn't include a
+                            # [DONE] when finish_reason is set; emit the
+                            # summary now so the client knows the stream
+                            # is done.
+                            usage = evt.get("usage") or {}
+                            yield f"data: {json.dumps({'done': True, 'model': model, 'total_tokens': usage.get('completion_tokens', total_tokens)})}\n\n"
+                            return
+
+    except httpx.ConnectError:
+        yield f"data: {json.dumps({'error': f'Cannot connect to OpenAI-compatible backend at {base_url}. Is it running?'})}\n\n"
+    except httpx.TimeoutException:
+        yield f"data: {json.dumps({'error': 'OpenAI-compatible backend request timed out (300s).'})}\n\n"
+    except Exception as e:
+        logger.exception("Unexpected error streaming from OpenAI-compatible backend")
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+
 async def run_ask_extraction(markdown: str, model: str | None = None) -> str | None:
     """Non-streaming Ask-LLM JSON extraction (used by Deep-Extract mode).
 
@@ -167,6 +260,70 @@ async def run_ask_extraction(markdown: str, model: str | None = None) -> str | N
         context += "\n\n[Document truncated for context window]"
 
     chosen_model = model or settings.chat_model_id
+    context_chars = len(context)
+
+    if settings.chat_provider == "openai":
+        # OpenAI Chat Completions (vLLM, OpenAI public API, llama.cpp server, ...).
+        url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
+        payload = {
+            "model": chosen_model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT.format(context=context)},
+                # The streaming chat endpoint uses the user's first message as
+                # the "ask" trigger. For a non-streaming JSON extraction we
+                # want a single deterministic invocation: the model should
+                # produce the JSON object immediately. The empty user
+                # message is a no-op the model ignores; it just primes the
+                # system prompt's behaviour.
+                {"role": "user", "content": "Extract the JSON object for the document above."},
+            ],
+            "stream": False,
+            # 8k output is plenty for the four-section JSON (a few hundred to
+            # a few thousand tokens) and leaves room for the prompt within
+            # typical 32k–64k vLLM context windows.
+            "max_tokens": 8_192,
+        }
+        headers = {"Content-Type": "application/json"}
+        if settings.openai_api_key:
+            headers["Authorization"] = f"Bearer {settings.openai_api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+        except httpx.ConnectError:
+            logger.warning(
+                "OpenAI-compatible backend unreachable at %s; Ask step skipped",
+                settings.openai_base_url,
+            )
+            return None
+        except httpx.TimeoutException:
+            logger.warning("OpenAI-compatible Ask step timed out after 300s")
+            return None
+        except Exception:
+            logger.exception("Unexpected error in run_ask_extraction (openai)")
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(
+                "OpenAI-compatible backend returned %d for Ask extraction: %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+            return None
+
+        try:
+            body = resp.json()
+        except json.JSONDecodeError:
+            logger.warning("OpenAI-compatible Ask response was not valid JSON")
+            return None
+
+        choices = body.get("choices") or []
+        if not choices:
+            logger.warning("OpenAI-compatible Ask response had no choices")
+            return None
+        content = (choices[0].get("message") or {}).get("content") or ""
+        return content.strip() or None
+
+    # Default: Ollama native NDJSON.
     payload = {
         "model": chosen_model,
         "messages": [
@@ -441,7 +598,33 @@ def _sanitize_ask_values(obj) -> str | None:
 
 @router.get("/ollama-status")
 async def ollama_status() -> dict:
-    """Quick reachability probe — returns whether Ollama is accessible from the backend."""
+    """Quick reachability probe — returns whether the active chat backend
+    is accessible from the backend.
+
+    The route is still named ``/ollama-status`` for backward compatibility
+    (frontend depends on the URL); when ``CHAT_PROVIDER=openai`` it probes
+    the OpenAI-compatible backend's ``/v1/models`` endpoint instead.
+    """
+    if settings.chat_provider == "openai":
+        host = settings.openai_base_url
+        url = f"{host.rstrip('/')}/models"
+        headers: dict[str, str] = {}
+        if settings.openai_api_key:
+            headers["Authorization"] = f"Bearer {settings.openai_api_key}"
+        reachable = False
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                resp = await client.get(url, headers=headers)
+                reachable = resp.status_code == 200
+        except Exception:
+            pass
+        return {
+            "reachable": reachable,
+            "host": host,
+            "model": settings.chat_model_id,
+            "provider": "openai",
+        }
+
     host = settings.ollama_host
     reachable = False
     try:
@@ -450,7 +633,12 @@ async def ollama_status() -> dict:
             reachable = resp.status_code == 200
     except Exception:
         pass
-    return {"reachable": reachable, "host": host, "model": settings.chat_model_id}
+    return {
+        "reachable": reachable,
+        "host": host,
+        "model": settings.chat_model_id,
+        "provider": "ollama",
+    }
 
 
 @router.post("/{doc_id}/chat")
@@ -486,15 +674,26 @@ async def chat(doc_id: str, body: ChatRequest, request: Request) -> StreamingRes
     ollama_messages = [system_message] + history
 
     logger.info(
-        "Chat: doc=%s model=%s messages=%d context_chars=%d",
+        "Chat: doc=%s model=%s messages=%d context_chars=%d provider=%s",
         doc_id,
         model,
         len(body.messages),
         len(context),
+        settings.chat_provider,
     )
 
+    if settings.chat_provider == "openai":
+        stream = _stream_openai_chat(
+            ollama_messages,
+            model,
+            settings.openai_base_url,
+            settings.openai_api_key or None,
+        )
+    else:
+        stream = _stream_ollama(ollama_messages, model, settings.ollama_host)
+
     return StreamingResponse(
-        _stream_ollama(ollama_messages, model, settings.ollama_host),
+        stream,
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -470,9 +470,16 @@ app.include_router(reasoning_router)
 
 def _build_reasoning_runner() -> DoclingAgentReasoningRunner | None:
     """Wire the reasoning runner if `REASONING_ENABLED=true` and deps are
-    importable. Today only `LLM_PROVIDER_TYPE=ollama` is supported (cf.
-    `LLMProvider` docstring); other values fall through to a logged warning
-    + None so the rest of the app boots cleanly.
+    importable. Today only `LLM_PROVIDER_TYPE=ollama` is realizable for the
+    reasoning runner (docling-agent is hardwired to Ollama via mellea, see
+    https://github.com/docling-project/docling-agent/issues/26); other values
+    fall through to a logged warning + None so the rest of the app boots
+    cleanly.
+
+    The chat and VLM endpoints are independent and DO support
+    `LLM_PROVIDER_TYPE=openai` (vLLM, OpenAI public API, ...). The reasoning
+    runner's Ollama-only constraint is purely an upstream docling-agent /
+    mellea limitation, not an `OpenAIProvider` limitation.
     """
     if not settings.reasoning_enabled:
         return None
@@ -484,9 +491,12 @@ def _build_reasoning_runner() -> DoclingAgentReasoningRunner | None:
         return None
     if settings.llm_provider_type != "ollama":
         logger.warning(
-            "Unsupported LLM_PROVIDER_TYPE=%s — reasoning runner disabled (only "
-            "'ollama' is realizable today, see "
-            "https://github.com/docling-project/docling-agent/issues/26)",
+            "Unsupported LLM_PROVIDER_TYPE=%s for the reasoning runner — "
+            "only 'ollama' is realizable today (docling-agent is hardwired "
+            "to Ollama via mellea, see "
+            "https://github.com/docling-project/docling-agent/issues/26). "
+            "The chat and VLM endpoints still work via CHAT_PROVIDER=openai / "
+            "VLM_OPENAI_URL.",
             settings.llm_provider_type,
         )
         return None

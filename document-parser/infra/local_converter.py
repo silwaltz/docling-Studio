@@ -575,12 +575,16 @@ def _build_ollama_vlm_converter(options: ConversionOptions | None = None) -> Doc
             else settings.vlm_ollama_prompt
         )
 
-        ollama_url = f"{settings.ollama_host.rstrip('/')}/v1/chat/completions"
+        ollama_url = (
+            settings.vlm_openai_url.strip()
+            if settings.vlm_openai_url and settings.vlm_openai_url.strip()
+            else f"{settings.ollama_host.rstrip('/')}/v1/chat/completions"
+        )
         logger.info(
-            "Building Ollama VLM converter (model: %s, scale: %s, mode: %s)",
+            "Building VLM converter (model: %s, scale: %s, mode: %s)",
             settings.vlm_ollama_model, image_scale, output_mode,
         )
-        logger.info(f"Ollama URL: {ollama_url}")
+        logger.info(f"VLM URL: {ollama_url}")
         # Log the runaway-prevention knobs up front so a stuck run can be
         # diagnosed from the converter-build log line alone.
         logger.info(
