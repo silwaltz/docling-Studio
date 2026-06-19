@@ -97,10 +97,11 @@ Docling Studio is a document analysis platform with FastAPI backend (hexagonal a
 - **Storage**: SQLite (metadata), file system (uploads), Neo4j (graph), OpenSearch (search)
 - **Infrastructure**: Docker Compose, GitHub Actions, Nginx
 - **Testing**: pytest, Vitest, Karate (API), Karate UI (browser)
-- **LLM**: Ollama (local) for document Q&A
+- **LLM**: vLLM (OpenAI-compatible) on `:8000` serving Qwen3-VL-8B-Instruct-AWQ-4bit as `qwen3-vl:8b-instruct` — single model covers BOTH the Ask pipeline (text chat) and the VLM pipeline (vision). See `.env` and `scripts/start_vllm_qwen.py` for the launch command.
 
 ## User Preferences
 
+- **Single-model solution (2026-06-19)**: 16 GB GPU constraint → one model only. The Ask pipeline and the VLM pipeline both go through the same vLLM OpenAI-compatible server on `:8000`. `CHAT_MODEL_ID=qwen3-vl:8b-instruct`, `OPENAI_BASE_URL=http://host.docker.internal:8000/v1`, `VLM_OPENAI_URL=http://host.docker.internal:8000/v1/chat/completions`. Container is named `vllm` (not `vllm-ask` / `vllm-vlm`). Ask latency on Doc2: 3.69s, 213 tokens, 10/10 4-section entities extracted (3 over-extracted on Goods — invoice line items).
 - **VLM Backend**: Default VLM backend is `ollama` (qwen3-vl:8b-instruct hosted on Ollama — note: NOT `qwen3-vl:8b`, which silently falls back to OCR) instead of `granite` (in-process transformers). Users can select per-analysis via frontend UI or set globally via `VLM_BACKEND` env var.
 - **VLM Output Mode** (Ollama only): `vlm_output_mode` ∈ {`json` (default, extract the four canonical sections), `markdown` (extract everything, preserve structure as MD)}. Selectable per-analysis in the dialog's VLM pipeline options, or globally via prompt env var override. When `markdown` is selected, the Ask LLM pipeline still receives the document as `content_markdown` (same path as the standard pipeline).
 - **Ask Feature**: System prompt configured to extract trade/shipping document data as a 4-section flat JSON object (`Company Name<n>`, `Address<n>`, `Shipping Information<n>`, `Goods Description<n>`). Frontend auto-detects and allows JSON download.
@@ -111,9 +112,14 @@ Docling Studio is a document analysis platform with FastAPI backend (hexagonal a
 
 These are things that have bitten us and will bite again. Document once, never debug twice.
 
-- **`CHAT_MODEL_ID` env var is wrong in compose.** `docker-compose.yml` and `docker-compose.dev.yml` set `CHAT_MODEL_ID=gemma4:e4b` (no `-it-qat` suffix). Ollama only has `gemma4:e4b-it-qat`. The chat endpoint will return 404 from Ollama for every request unless either (a) the user types the correct model name in the Ask tab's model textbox, or (b) the request body includes `"model": "gemma4:e4b-it-qat"` explicitly. Fix the env var in compose, or accept the manual override.
-- **Gemma4 streaming drops wrapping `{ }` ~50% of the time** and uses two other quirks: `"key<1>"` with angle brackets instead of `"key1"`, and `"key"="value"` with `=` instead of `:`. Frontend's `extractJson` in `DocAskTab.vue` only handles the brace-less case. See `experiments/reparse-saved.py` for the full set of fallbacks if you need to recover all 14 cases.
-- **`\_` escapes in gemma4 output.** Spaces inside string values come back escaped as `\_`. Frontend has `cleanJsonForDownload` to strip them. Replicate in any offline parser.
+- **One-shot bring-up (2026-06-19).** The vLLM container is now part of `docker-compose.dev.yml` (with its own healthcheck that pings `/v1/chat/completions` with `max_tokens=1`, `start_period=300s` for model load). Cold-start the whole stack with `docker compose -f docker-compose.dev.yml up -d` — no separate `scripts/start_vllm_qwen.py` step needed. The script is kept as a fallback for running vLLM outside the compose network. `depends_on.vllm.condition: service_healthy` makes the document-parser wait for the model to actually load before booting.
+- **Deep Extract: VLM-direct step silently fails on vLLM (2026-06-19, unfixed).** When the VLM-direct step is invoked via the vLLM OpenAI endpoint, `infra/local_converter.py`'s HTTP patch logs `🔧 Error parsing/fixing response: object of type 'NoneType' has no len()` (line 219) and the run lands at `VLM JSON extraction: no page responses collected`. Result: `merged == ask_json` (no VLM-direct contribution), and the saved artifacts contain only `ask_raw` + `ask_json` + `merged` — no `vlm_json`. Standard + Ask still works, and the merge is still valid (just less coverage). To fix: investigate why the patch's `len(content)` / `len(reasoning)` calls fail (most likely vLLM returns a `content: null` field when the model is in `enable_in_reasoning` mode rather than the expected string) and consider using `vllm serve ... --enable-in-reasoning` or stripping nulls defensively.
+- **Port 8000 conflict on Windows when running vLLM + dev compose.** `docker-compose.dev.yml` originally mapped `8000:8000` for the document-parser, which collides with the vLLM OpenAI server on `:8000`. Now remapped to `8002:8000` (host → container). Frontend's `VITE_API_PROXY_TARGET` still uses the in-network name `http://document-parser:8000` and is unaffected.
+- **Qwen3-VL context window on 16 GB.** vLLM needs ~4.5 GiB KV cache for `max-model-len=32768`, more than the 0.85-utilization budget allows. The launched container runs at `max-model-len=24576` and `gpu-memory-utilization=0.92` (see `scripts/start_vllm_qwen.py`). If you bump back to 32k, expect OOM on this GPU.
+- **Qwen3-VL over-extracts on the Ask prompt** (vs Gemma4). On Doc2 the model emitted 4 `Goods Description` entries — 1 correct + 3 invoice line items (`100 PCT, VALUE OF GOODS SHIPPED`, `DEDUCTION OF ADVANCE PAYMENT`, `NET AMOUNT`). The `_SYSTEM_PROMPT` says "NO quantities / NO codes", but Qwen3-VL ignores that. Cross-check golden still 3/3 companies, 2/2 addresses, 1/1 shipping, 1/1 goods. Acceptable for the customization MVP; tighten the prompt or post-filter if precision matters.
+- **`CHAT_MODEL_ID` env var is wrong in compose.** `docker-compose.yml` and `docker-compose.dev.yml` set `CHAT_MODEL_ID=gemma4:e4b` (no `-it-qat` suffix). Ollama only has `gemma4:e4b-it-qat`. The chat endpoint will return 404 from Ollama for every request unless either (a) the user types the correct model name in the Ask tab's model textbox, or (b) the request body includes `"model": "gemma4:e4b-it-qat"` explicitly. Fix the env var in compose, or accept the manual override. (Historical — current `.env` overrides to `qwen3-vl:8b-instruct`.)
+- **Gemma4 streaming drops wrapping `{ }` ~50% of the time** and uses two other quirks: `"key<1>"` with angle brackets instead of `"key1"`, and `"key"="value"` with `=` instead of `:`. Frontend's `extractJson` in `DocAskTab.vue` only handles the brace-less case. See `experiments/reparse-saved.py` for the full set of fallbacks if you need to recover all 14 cases. (Historical — only relevant if you revert to the Gemma path.)
+- **`\_` escapes in gemma4 output.** Spaces inside string values come back escaped as `\_`. Frontend has `cleanJsonForDownload` to strip them. Replicate in any offline parser. (Historical — only relevant if you revert to the Gemma path.)
 
 ## Child DOX Index
 
@@ -155,7 +161,9 @@ These are things that have bitten us and will bite again. Document once, never d
   - `design/` - Feature design documents
   - `community/` - Onboarding, issue triage, roadmap
   - `git-workflow/` - Commit conventions, code review, merge policy
-  - `operations/` - Incident response, security, monitoring
+  - `operations/` - Incident response, monitoring, security, and infrastructure deployment guides
+    - `vllm-rhel-installation.md` - RHEL 9 + Docker + vLLM (Qwen3-VL-AWQ-4bit) install guide for split-host deployments
+    - `vllm-rhel-install/` - Companion scripts: `install-vllm-rhel.sh`, `verify-vllm-rhel.sh`, `docker-compose.yml`
   - `release/` - Deployment, rollback playbooks
 
 ### Infrastructure
