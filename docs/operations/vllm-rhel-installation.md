@@ -142,46 +142,132 @@ The container name is **`vllm`** (was previously `vllm-ask` / `vllm-vlm` /
 served under the alias `qwen3-vl:8b-instruct` via `--served-model-name`, which
 matches the model name docling-studio already references in its `.env`.
 
-## 5. Step-by-step install
+## 5. Prerequisites on a fresh RHEL 9.x host
+
+One-time per host. Idempotent — safe to re-run. **Skip this section entirely**
+if your host already has the NVIDIA driver, Docker CE, and
+`nvidia-container-toolkit` wired up. You can verify with:
 
 ```bash
-# 0. Copy the companion scripts onto the RHEL host (from a clone of the
-#    docling-studio repo on your workstation).
+nvidia-smi                                                  # driver + GPU
+docker run --rm --gpus all nvidia/cuda:12.6.0-base nvidia-smi  # GPU passthrough
+```
+
+If both work, jump straight to **Section 6**.
+
+### 5.1 Copy the helper scripts onto the host
+
+```bash
+# From your workstation (a clone of the docling-studio repo)
 scp -r docs/operations/vllm-rhel-install/ root@<rhel-host>:/root/
 
-# 1. Run the installer (idempotent).
 ssh root@<rhel-host>
 cd /root/vllm-rhel-install
 chmod +x install-vllm-rhel.sh verify-vllm-rhel.sh
-sudo ./install-vllm-rhel.sh
+```
 
-# 2. First run: the script installs the driver and exits with a reboot hint.
+### 5.2 Run the prereq installer
+
+```bash
+sudo ./install-vllm-rhel.sh
+```
+
+What it does (numbered phases, each idempotent):
+
+1. Verify RHEL subscription + enable baseos / appstream / supplementary repos.
+2. Install EPEL + base packages (`git`, `curl`, `firewalld`, `pciutils`, …).
+3. **If `nvidia-smi` is missing**: install `kmod-nvidia` from the negativo17
+   EPEL-NVIDIA repo, blacklist nouveau, regenerate initramfs, then **exit 0
+   with a reboot hint** — return to step 5.3 below.
+4. **If `nvidia-smi` already works**: install Docker CE + compose v2 plugin
+   (Docker's official RHEL repo) + NVIDIA Container Toolkit (NVIDIA's RHEL
+   repo), wire up the docker runtime via `nvidia-ctk`, restart dockerd.
+5. Smoke-test GPU passthrough: `docker run --rm --gpus all
+   nvidia/cuda:12.6.0-base nvidia-smi`. Fails the script if this errors with
+   `could not select device driver`.
+6. `docker pull vllm/vllm-openai:latest` (~10 GB, one-time).
+7. Lay down `/opt/vllm/` + `/var/lib/vllm/hf-cache/` + `/var/log/vllm/`.
+8. Open host port 8000/tcp via `firewalld` (or `iptables` if firewalld is off).
+9. Write `/opt/vllm/.env` with the model tag + GPU-util knobs for the
+   compose service to consume.
+
+The script is **safe to re-run** after any partial failure — each phase
+short-circuits if its target is already in place.
+
+### 5.3 Reboot after the first driver install
+
+If `install-vllm-rhel.sh` printed the reboot hint in step 3:
+
+```bash
 sudo systemctl reboot
 ssh root@<rhel-host>
 cd /root/vllm-rhel-install
-sudo ./install-vllm-rhel.sh    # continues Docker + toolkit + vLLM image pull
+sudo ./install-vllm-rhel.sh    # continues from step 4 onward
+```
 
-# 3. Drop the project files in place.
+After this second pass you should see all 9 phases complete and a final "Done."
+message with no further action required.
+
+## 6. Stack bring-up
+
+This is the repeatable, version-controlled part. **It is OS-agnostic** — the
+same commands work on Ubuntu, Fedora, Rocky, or anywhere else that already has
+the prerequisites from Section 5. Every step below assumes you've finished
+Section 5 (or your host already had the prereqs).
+
+### 6.1 Stage the compose file
+
+```bash
 sudo mkdir -p /opt/vllm
-sudo cp docker-compose.yml /opt/vllm/
+sudo cp /root/vllm-rhel-install/docker-compose.yml /opt/vllm/
+```
 
-# 4. Start the stack.
+### 6.2 (Optional) Override defaults in `.env`
+
+`install-vllm-rhel.sh` already wrote `/opt/vllm/.env` with sensible 16 GB
+defaults. Bump these for headroom:
+
+| Variable | 16 GB default | 24 GB+ bump |
+|---|---|---|
+| `VLLM_MAX_MODEL_LEN` | `24576` | `32768` |
+| `VLLM_GPU_MEM_UTIL` | `0.92` | `0.95` |
+
+Edit `/opt/vllm/.env` directly, then re-run `docker compose up -d` (no
+re-install needed — compose re-reads `.env` on every invocation).
+
+### 6.3 Bring the stack up
+
+```bash
 cd /opt/vllm
 sudo docker compose up -d                 # starts one `vllm` service
 sudo docker compose ps                    # status; healthcheck turns green
-                                          #   after model load + CUDA graphs (~5-10 min
-                                          #   cold, ~30 s warm)
+                                          #   after model load + CUDA graphs
+                                          #   (~5-10 min cold, ~30 s warm)
+```
 
-# 5. Tail the log until it's healthy.
+### 6.4 Wait for the vLLM service to become healthy
+
+```bash
 sudo docker compose logs -f vllm
 #   "Application startup complete." + a healthy healthcheck ping  ← ready
+```
 
-# 6. Smoke-test the full stack.
+The `start_period: 300s` on the compose healthcheck absorbs the cold-start
+model load; the healthcheck itself pings `/v1/chat/completions` with
+`max_tokens=1` so it only turns green after the engine is actually serving.
+
+### 6.5 Smoke-test the full stack
+
+```bash
 cd /root/vllm-rhel-install
 sudo ./verify-vllm-rhel.sh
 ```
 
-### What the docker-compose stack gives you
+Six checks (driver, compose stack, `/v1/models`, Ask text-only non-streaming,
+Ask text-only streaming SSE, VLM text+image_url). Exits 0 only if all six
+pass — re-run after any change.
+
+### What the stack gives you
 
 | Container | Host port | Purpose | Healthcheck |
 |---|---|---|---|
@@ -191,7 +277,7 @@ That's it. One container, one port. First-boot time is dominated by vLLM model
 download + load (~5–10 min on a fast link for cold start; ~30 s for warm
 restart with the HF cache bind-mounted).
 
-## 6. Pointing docling-studio at vLLM
+## 7. Pointing docling-studio at vLLM
 
 In the project's `.env` (or `docker-compose.override.yml` on the **docling-studio
 host**, which may be different from the vLLM host):
@@ -239,7 +325,7 @@ The UI's `/ollama-status` indicator (now actually an `/v1/models` status check
 behind the scenes) turns green, and both the Ask feature and the VLM pipeline
 route through the same vLLM server.
 
-## 7. The fallback script (`scripts/start-vllm-qwen.sh`)
+## 8. The fallback script (`scripts/start-vllm-qwen.sh`)
 
 For developers running vLLM **outside** a `docker compose` project — e.g.
 pointing the script at a bare `docker run`, or running it on a workstation
@@ -255,7 +341,7 @@ If you ran the bundle installer and `docker compose up -d` in `/opt/vllm` is
 already serving vLLM, you do **not** need to run the script — both target the
 same port and the second one will fail to bind. Use one or the other.
 
-## 8. What to expect after the swap
+## 9. What to expect after the swap
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -270,7 +356,7 @@ same port and the second one will fail to bind. Use one or the other.
 | `port 8000 already in use` when binding vLLM | Another container (e.g. docling-studio on `8000:8000`) is already on it | Move docling-studio to `8002:8000` (the `docker-compose.dev.yml` default), then retry |
 | VLM request returns content with `null` instead of a string (Deep Extract path) | vLLM's CoT mode in Qwen3-VL puts the answer in `reasoning` and emits `content: null` | Known issue (2026-06-19, unfixed). Either pass `"chat_template_kwargs": {"enable_thinking": false}` per request, or run vLLM with `--enable-in-reasoning` and a `reasoning-parser`. The merge still works (just without the VLM-direct contribution). |
 
-## 9. Performance tuning knobs
+## 10. Performance tuning knobs
 
 The shipped compose defaults are tuned for the project's reference setup
 (16 GB RTX 5060 Ti):
@@ -303,7 +389,7 @@ HF cache lives in `${HF_CACHE_DIR:-/var/lib/vllm/hf-cache}` so model files
 survive `docker compose down`. Wipe with `docker compose down -v` if you need
 a clean reload.
 
-## 10. Smoke test reference
+## 11. Smoke test reference
 
 `verify-vllm-rhel.sh` covers:
 
@@ -317,7 +403,7 @@ a clean reload.
 
 The script exits 0 only if all six pass. Re-run after any change.
 
-## 11. File inventory
+## 12. File inventory
 
 This document lives at `docs/operations/vllm-rhel-installation.md`. Its
 companion scripts ship alongside it in `docs/operations/vllm-rhel-install/`:
@@ -334,7 +420,7 @@ firewall rules, and HF cache are written to `/opt/vllm/` on the target
 RHEL host — that is **not** the repo path; it's the deployment path
 on the GPU server.
 
-## 12. Rollback
+## 13. Rollback
 
 If something goes wrong, point docling-studio's `.env` back at a local
 Ollama (or another OpenAI-compatible endpoint):
@@ -355,7 +441,7 @@ sudo docker compose down    # keeps HF cache volume
 sudo docker compose down -v # also wipes HF cache
 ```
 
-## 13. Why this works (zero project code changes)
+## 14. Why this works (zero project code changes)
 
 The migration is purely **deployment-side**:
 
