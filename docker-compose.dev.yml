@@ -91,7 +91,11 @@ services:
       context: ./document-parser
       target: ${CONVERSION_MODE:-local}
     ports:
-      - "8000:8000"
+      # 8000 is the vLLM OpenAI-compatible server (qwen3-vl).
+      # 8001 is the embedding service. Expose the FastAPI app on 8002;
+      # the in-network alias `document-parser:8000` still works for the
+      # frontend.
+      - "8002:8000"
     volumes:
       - ./document-parser:/app
       - uploads_data:/app/uploads
@@ -117,6 +121,14 @@ services:
       CHAT_ENABLED: ${CHAT_ENABLED:-true}
       CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b-it-qat}
       OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      # vLLM / OpenAI-compatible backend (qwen3-vl:8b-instruct on :8000).
+      # When CHAT_PROVIDER=openai the chat endpoint talks to the vLLM
+      # OpenAI-compat server instead of Ollama. The VLM path uses
+      # VLM_OPENAI_URL when set, falling back to {OLLAMA_HOST}/v1.
+      CHAT_PROVIDER: ${CHAT_PROVIDER:-ollama}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8000/v1}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      VLM_OPENAI_URL: ${VLM_OPENAI_URL:-}
       # VLM backend settings
       VLM_BACKEND: ${VLM_BACKEND:-ollama}
       VLM_FALLBACK_MODEL: ${VLM_FALLBACK_MODEL:-GRANITEDOCLING_TRANSFORMERS}
@@ -139,6 +151,8 @@ services:
         condition: service_healthy
       neo4j:
         condition: service_healthy
+      vllm:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -159,6 +173,56 @@ services:
     command: ["sh", "-c", "npm install && npm run dev -- --host"]
     depends_on:
       - document-parser
+
+  # --- vLLM (single model, both Ask + VLM) -----------------------------------
+  # The vllm/vllm-openai image defaults its entrypoint to `vllm serve`; we
+  # pass the model + serving args via `command`. The HF cache bind-mount
+  # keeps the model warm across container restarts (no redownload).
+  #
+  # VRAM math (16 GB RTX 5060 Ti):
+  #   8B AWQ ≈ 7.4 GB, KV cache for 24 k context ≈ 4–5 GB, total ≈ 13.8 GB
+  #   at gpu_memory_utilization=0.92. 32 k context was OOM at 0.85 — keep
+  #   the 24 k/0.92 pair unless you also bump the GPU.
+  #
+  # Port :8000 is bound on the host because that's the URL the .env points
+  # at (`http://host.docker.internal:8000/v1`). The document-parser reaches
+  # it via Docker's host.docker.internal DNS bridge.
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: vllm
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    ipc: host
+    volumes:
+      # Bind-mount the host's HF cache so the model stays downloaded.
+      # Override HF_CACHE_PATH in your shell to point elsewhere.
+      - ${HF_CACHE_PATH:-${USERPROFILE}/.cache/huggingface}:/root/.cache/huggingface
+    command:
+      - --model=cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit
+      - --served-model-name=qwen3-vl:8b-instruct
+      - --max-model-len=24576
+      - --gpu-memory-utilization=0.92
+      - --limit-mm-per-prompt={"image":1}
+      - --dtype=auto
+    healthcheck:
+      # vLLM /v1/chat/completions with one max_token=1 ping — exercises the
+      # full engine (tokenize + decode) so this turns green only after the
+      # model is actually loaded and warmed up.
+      test:
+        - CMD-SHELL
+        - 'curl -sf http://localhost:8000/v1/chat/completions -H ''Content-Type: application/json'' -d ''{"model":"qwen3-vl:8b-instruct","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'''
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
 volumes:
   opensearch_data:
