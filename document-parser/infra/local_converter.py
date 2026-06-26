@@ -115,111 +115,174 @@ def _apply_vlm_debug_patch():
         # without re-scanning every response.
         runaway_stats = {'count': 0, 'total_truncated_chars': 0}
 
-        # Patch at the lowest level - the actual HTTP request
+        # Shared response-handling helper. Both the `requests.post` patch
+        # AND the `Session.send` patch route through this — Docling's VLM
+        # Pipeline uses `requests.Session.post` (via `_make_retry_session`),
+        # NOT the module-level `requests.post`, so patching only the
+        # latter (the original behavior) silently misses every VLM-direct
+        # call. With this helper in place, both code paths feed
+        # `page_responses` and `_convert_sync` sees them.
+        def _process_vlm_response(url, response):
+            """Handle a chat/completions response: fix None content/reasoning,
+            truncate runaway output, store into the right page-responses bucket.
+            Mutates `response._content` in place when the reasoning→content
+            fixup (or truncation) changes the body, so callers that re-parse
+            `response.json()` after this see the patched payload.
+            """
+            if 'chat/completions' not in str(url):
+                return
+
+            try:
+                response_data = response.json()
+                if not isinstance(response_data, dict):
+                    return
+                if 'choices' not in response_data or not response_data['choices']:
+                    return
+
+                msg = response_data['choices'][0].get('message') or {}
+                # CRITICAL: vLLM returns `content: null` and `reasoning: null`
+                # for Qwen3-VL-Instruct when the model emits CoT or when the
+                # response hasn't been populated yet. `dict.get(key, '')`
+                # only covers the missing-key case — if the key IS present
+                # with a None value, .get() returns None, and `len(None)`
+                # crashes the whole patch with `object of type 'NoneType'
+                # has no len()`. That except block used to swallow the
+                # crash silently, leaving the VLM JSON bucket empty and
+                # making deep-extract's VLM-direct contribution disappear.
+                #
+                # `or ''` coerces both None AND missing-key to '', so the
+                # `if not content and reasoning:` reasoning→content fixup
+                # below can actually run.
+                content = msg.get('content') or ''
+                reasoning = msg.get('reasoning') or ''
+                # vLLM uses `reasoning_content` in some builds (e.g.
+                # --enable-reasoning on newer versions) instead of
+                # `reasoning`. Fall back so the fixup above still triggers.
+                if not reasoning:
+                    reasoning = msg.get('reasoning_content') or ''
+                _patch_logger.info(
+                    f"🔧 RAW Ollama response: content_len={len(content)}, "
+                    f"reasoning_len={len(reasoning)}"
+                )
+
+                # Determine the actual response text (for collection)
+                actual_response = content
+
+                # FIX: qwen3-vl puts output in 'reasoning' field when doing CoT
+                # If content is empty but reasoning has data, use reasoning as content
+                if not content and reasoning:
+                    _patch_logger.info("🔧 FIXING: Moving reasoning to content (qwen3-vl CoT behavior)")
+                    response_data['choices'][0]['message']['content'] = reasoning
+                    actual_response = reasoning
+                    import json
+                    fixed_json = json.dumps(response_data)
+                    response._content = fixed_json.encode('utf-8')
+                    if hasattr(response, '_json'):
+                        delattr(response, '_json')
+                    _patch_logger.info(f"🔧 Fixed content preview: {reasoning[:200]}")
+                elif content:
+                    _patch_logger.info(f"🔧 Content preview: {content[:200]}")
+                else:
+                    _patch_logger.warning("🔧 CONTENT IS EMPTY!")
+
+                # Runaway defense: cap the response before storage
+                # so an unbounded Ollama response (model ignored
+                # max_tokens, or hit the context window) cannot
+                # bloat the deep-extract artifact or block the
+                # downstream merge parser. The cap is configurable
+                # via VLM_OLLAMA_RESPONSE_CHAR_CAP.
+                if actual_response:
+                    mode_now = page_responses.get('mode', 'json')
+                    truncated, was_runaway = _truncate_runaway_response(
+                        actual_response,
+                        settings.vlm_ollama_response_char_cap,
+                        mode_now,
+                    )
+                    if was_runaway:
+                        runaway_stats['count'] += 1
+                        runaway_stats['total_truncated_chars'] += (
+                            len(actual_response) - len(truncated)
+                        )
+                        _patch_logger.warning(
+                            "🔧 RUNAWAY on page %d (mode=%s): "
+                            "trimmed %d -> %d chars (cap=%d). "
+                            "If this fires repeatedly, lower "
+                            "VLM_OLLAMA_MAX_OUTPUT_TOKENS or "
+                            "sharpen VLM_OLLAMA_PROMPT to bound "
+                            "the entity list.",
+                            page_counter['current'], mode_now,
+                            len(actual_response), len(truncated),
+                            settings.vlm_ollama_response_char_cap,
+                        )
+                        # If the truncation happened after the
+                        # reasoning→content fix-up above, the
+                        # patched response._content is now stale
+                        # (still encodes the runaway). Re-patch.
+                        if not content and reasoning:
+                            response_data['choices'][0]['message']['content'] = truncated
+                            import json
+                            fixed_json = json.dumps(response_data)
+                            response._content = fixed_json.encode('utf-8')
+                            if hasattr(response, '_json'):
+                                delattr(response, '_json')
+                        actual_response = truncated
+
+                # Store the actual response. The caller decides which
+                # bucket (json vs markdown) is the live one for the
+                # current run by setting `page_responses['mode']`
+                # before invoking the converter.
+                if actual_response:
+                    mode = page_responses.get('mode', 'json')
+                    if mode == 'markdown':
+                        page_responses['markdowns'].append(actual_response)
+                        _patch_logger.info(
+                            f"🔧 Stored markdown response ({len(actual_response)} chars)"
+                        )
+                    else:
+                        page_responses['jsons'].append(actual_response)
+                        _patch_logger.info(
+                            f"🔧 Stored JSON response ({len(actual_response)} chars)"
+                        )
+
+                if reasoning and content:  # Only log if both exist
+                    _patch_logger.info(f"🔧 Reasoning preview: {reasoning[:200]}")
+            except Exception as e:
+                _patch_logger.error(f"🔧 Error parsing/fixing response: {e}")
+
+        # Patch at the module level - direct `requests.post(...)` callers.
+        # Defensive: many internal callers (httpx-based, the Ask path, etc.)
+        # don't go through this, but it costs nothing and covers any direct
+        # use.
         import requests
         original_post = requests.post
 
         def logged_post(url, *args, **kwargs):
             result = original_post(url, *args, **kwargs)
-            if 'chat/completions' in str(url):
-                try:
-                    response_data = result.json()
-                    if 'choices' in response_data and response_data['choices']:
-                        msg = response_data['choices'][0].get('message', {})
-                        content = msg.get('content', '')
-                        reasoning = msg.get('reasoning', '')
-                        _patch_logger.info(f"🔧 RAW Ollama response: content_len={len(content)}, reasoning_len={len(reasoning)}")
-
-                        # Determine the actual response text (for collection)
-                        actual_response = content
-
-                        # FIX: qwen3-vl puts output in 'reasoning' field when doing CoT
-                        # If content is empty but reasoning has data, use reasoning as content
-                        if not content and reasoning:
-                            _patch_logger.info(f"🔧 FIXING: Moving reasoning to content (qwen3-vl CoT behavior)")
-                            response_data['choices'][0]['message']['content'] = reasoning
-                            actual_response = reasoning
-                            # Replace the response content with fixed JSON
-                            import json
-                            fixed_json = json.dumps(response_data)
-                            # Monkey-patch the response's content and _content
-                            result._content = fixed_json.encode('utf-8')
-                            # Clear the cached JSON so it re-parses from our fixed content
-                            if hasattr(result, '_json'):
-                                delattr(result, '_json')
-                            _patch_logger.info(f"🔧 Fixed content preview: {reasoning[:200]}")
-                        elif content:
-                            _patch_logger.info(f"🔧 Content preview: {content[:200]}")
-                        else:
-                            _patch_logger.warning(f"🔧 CONTENT IS EMPTY!")
-
-                        # Runaway defense: cap the response before storage
-                        # so an unbounded Ollama response (model ignored
-                        # max_tokens, or hit the context window) cannot
-                        # bloat the deep-extract artifact or block the
-                        # downstream merge parser. The cap is configurable
-                        # via VLM_OLLAMA_RESPONSE_CHAR_CAP.
-                        if actual_response:
-                            mode_now = page_responses.get('mode', 'json')
-                            truncated, was_runaway = _truncate_runaway_response(
-                                actual_response,
-                                settings.vlm_ollama_response_char_cap,
-                                mode_now,
-                            )
-                            if was_runaway:
-                                runaway_stats['count'] += 1
-                                runaway_stats['total_truncated_chars'] += (
-                                    len(actual_response) - len(truncated)
-                                )
-                                _patch_logger.warning(
-                                    "🔧 RUNAWAY on page %d (mode=%s): "
-                                    "trimmed %d -> %d chars (cap=%d). "
-                                    "If this fires repeatedly, lower "
-                                    "VLM_OLLAMA_MAX_OUTPUT_TOKENS or "
-                                    "sharpen VLM_OLLAMA_PROMPT to bound "
-                                    "the entity list.",
-                                    page_counter['current'], mode_now,
-                                    len(actual_response), len(truncated),
-                                    settings.vlm_ollama_response_char_cap,
-                                )
-                                # If the truncation happened after the
-                                # reasoning→content fix-up above, the
-                                # patched result._content is now stale
-                                # (still encodes the runaway). Re-patch.
-                                if not content and reasoning:
-                                    response_data['choices'][0]['message']['content'] = truncated
-                                    fixed_json = json.dumps(response_data)
-                                    result._content = fixed_json.encode('utf-8')
-                                    if hasattr(result, '_json'):
-                                        delattr(result, '_json')
-                                actual_response = truncated
-
-                        # Store the actual response. The caller decides which
-                        # bucket (json vs markdown) is the live one for the
-                        # current run by setting `page_responses['mode']`
-                        # before invoking the converter. We mirror into both
-                        # for safety, then `_convert_sync` picks the right
-                        # list — keeps this patch single-responsibility.
-                        if actual_response:
-                            mode = page_responses.get('mode', 'json')
-                            if mode == 'markdown':
-                                page_responses['markdowns'].append(actual_response)
-                                _patch_logger.info(
-                                    f"🔧 Stored markdown response ({len(actual_response)} chars)"
-                                )
-                            else:
-                                page_responses['jsons'].append(actual_response)
-                                _patch_logger.info(
-                                    f"🔧 Stored JSON response ({len(actual_response)} chars)"
-                                )
-
-                        if reasoning and content:  # Only log if both exist
-                            _patch_logger.info(f"🔧 Reasoning preview: {reasoning[:200]}")
-                except Exception as e:
-                    _patch_logger.error(f"🔧 Error parsing/fixing response: {e}")
+            _process_vlm_response(url, result)
             return result
 
         requests.post = logged_post
+
+        # CRITICAL FIX (2026-06-26): also patch `requests.Session.send`.
+        # Docling's VLM Pipeline uses
+        # `with _make_retry_session() as session: session.post(url, ...)` —
+        # a fresh Session per call. The original patch only monkey-patched
+        # `requests.post`, which never sees Session-based calls. Result:
+        # `logged_post` (and its belief that "Response is already stored
+        # in logged_post function") never fired, `page_responses` stayed
+        # empty, and `_convert_sync` reported "no page responses
+        # collected" — silently dropping the entire VLM-direct
+        # contribution from deep-extract's merge. Patching
+        # `Session.send` catches EVERY outgoing request (post, get, put,
+        # delete) because they all funnel through `send()`.
+        original_session_send = requests.Session.send
+
+        def logged_session_send(self, request, **kwargs):
+            response = original_session_send(self, request, **kwargs)
+            _process_vlm_response(request.url, response)
+            return response
+
+        requests.Session.send = logged_session_send
 
         # Also patch the API request function to log responses with timing
         import docling.utils.api_image_request as api_module
@@ -237,7 +300,8 @@ def _apply_vlm_debug_patch():
             elapsed = time.time() - start_time
             _patch_logger.info(f"📄 Page {page_num} processed in {elapsed:.1f}s (tokens: {num_tokens}, chars: {len(result_text)})")
 
-            # Response is already stored in logged_post function
+            # Response is already stored by `_process_vlm_response` (called
+            # from the Session.send patch installed above).
             if result_text:
                 _patch_logger.info(f"🔧 Response preview: {result_text[:200]}")
             else:
@@ -250,10 +314,10 @@ def _apply_vlm_debug_patch():
         logged_api_request._runaway_stats = runaway_stats
 
         api_module.api_image_request = logged_api_request
-        
+
         # Also patch streaming version
         original_streaming = api_module.api_image_request_streaming
-        
+
         def logged_streaming(image, prompt, url, timeout=20, headers=None, generation_stoppers=[], **params):
             _patch_logger.info(f"🔧 Streaming API request: url={url}, params={params}")
             result_text, num_tokens = original_streaming(image, prompt, url, timeout, headers, generation_stoppers, **params)
@@ -263,10 +327,10 @@ def _apply_vlm_debug_patch():
             else:
                 _patch_logger.warning(f"🔧 EMPTY STREAMING RESPONSE!")
             return result_text, num_tokens
-        
+
         api_module.api_image_request_streaming = logged_streaming
-        
-        _patch_logger.info("✅ VLM API debug patch applied")
+
+        _patch_logger.info("✅ VLM API debug patch applied (covers Session.send + requests.post)")
     except Exception as e:
         _patch_logger.error(f"Failed to apply VLM patch: {e}")
 
