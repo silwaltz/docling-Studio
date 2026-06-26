@@ -41,3 +41,4 @@ Documentation team owns structure and quality. Domain experts own content accura
 - `git-workflow/` - Commit conventions, code review, merge policy
 - `operations/` - Incident response, security, monitoring
 - `release/` - Deployment, rollback playbooks
+- `user-guide/` - Client-facing deployment & usage guides (bilingual 中英對照, junior-engineer friendly)

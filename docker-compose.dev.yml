@@ -117,6 +117,11 @@ services:
       # for the one-liner to generate a key. No default on purpose: a dev
       # who creates a sealed store must persist the key in their own .env.
       STORE_SECRET_KEY: ${STORE_SECRET_KEY:-}
+      # Docling model artifacts — baked into the image at build time by
+      # the `docling-model-baker` stage in document-parser/Dockerfile.
+      # The env var below tells Docling where to find them at runtime; the
+      # image never needs to reach the network to convert a document.
+      DOCLING_ARTIFACTS_PATH: ${DOCLING_ARTIFACTS_PATH:-/opt/docling/models}
       # Document Q&A chat via Ollama (running on host)
       CHAT_ENABLED: ${CHAT_ENABLED:-true}
       CHAT_MODEL_ID: ${CHAT_MODEL_ID:-gemma4:e4b-it-qat}
@@ -125,10 +130,15 @@ services:
       # When CHAT_PROVIDER=openai the chat endpoint talks to the vLLM
       # OpenAI-compat server instead of Ollama. The VLM path uses
       # VLM_OPENAI_URL when set, falling back to {OLLAMA_HOST}/v1.
-      CHAT_PROVIDER: ${CHAT_PROVIDER:-ollama}
+      #
+      # In production, the client provides their own vLLM server; override
+      # OPENAI_BASE_URL + VLM_OPENAI_URL via `.env` to point at it. The
+      # shipped dev defaults point at the `vllm` service in this compose
+      # file via host.docker.internal:8000.
+      CHAT_PROVIDER: ${CHAT_PROVIDER:-openai}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8000/v1}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      VLM_OPENAI_URL: ${VLM_OPENAI_URL:-}
+      VLM_OPENAI_URL: ${VLM_OPENAI_URL:-http://host.docker.internal:8000/v1/chat/completions}
       # VLM backend settings
       VLM_BACKEND: ${VLM_BACKEND:-ollama}
       VLM_FALLBACK_MODEL: ${VLM_FALLBACK_MODEL:-GRANITEDOCLING_TRANSFORMERS}

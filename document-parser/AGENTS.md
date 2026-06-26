@@ -15,6 +15,8 @@ Backend team owns all Python code, API contracts, database schema, and service o
 - **API contract**: REST with camelCase JSON (Pydantic), snake_case internally
 - **Database**: SQLite via aiosqlite, schema in `persistence/database.py`
 - **Conversion modes**: `local` (in-process Docling) or `remote` (Docling Serve HTTP)
+- **Offline Docling artifacts (2026-06-26)**: when running with `CONVERSION_ENGINE=local`, the Docker image must bake Docling model artifacts (`/opt/docling/models`) and set `DOCLING_ARTIFACTS_PATH` — the runtime must NOT reach the network. See `docs/design/offline-deployment.md` and the `docling-model-baker` stage in `document-parser/Dockerfile`. Setting `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1` is belt-and-braces against stray HF clients.
+- **OpenAI-compat LLM (Ask + VLM, 2026-06-26)**: both pipelines route through the vLLM OpenAI-compatible endpoint via `CHAT_PROVIDER=openai` + `OPENAI_BASE_URL` (Ask) and `VLM_OPENAI_URL` (VLM). For client-provided vLLM in production, override these env vars to point at the client's URL. Model alias must be `qwen3-vl:8b-instruct` to match `--served-model-name`.
 - **Extraction modes** (`extract_mode` on `PipelineOptionsRequest`):
   - `"standard"` (default) — single pipeline (standard or VLM-direct per `force_vlm_pipeline`).
   - `"deep"` — runs standard + Ask-LLM + VLM-direct-JSON, unions the two `content_json` outputs. See `domain/services.merge_extractions`. The standard's markdown/html remains the analysis surface.
