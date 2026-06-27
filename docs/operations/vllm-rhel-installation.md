@@ -354,7 +354,7 @@ same port and the second one will fail to bind. Use one or the other.
 | `HF_TOKEN` missing for gated model | Some Qwen variants require accepting a license | `export HF_TOKEN=<your-token>` in `/opt/vllm/.env`, `docker compose up -d` |
 | Older driver + new image fails on consumer GPU | CUDA compat libs only support datacenter GPUs | Upgrade host driver to R555+, or pin a `vllm-openai` image matching your CUDA |
 | `port 8000 already in use` when binding vLLM | Another container (e.g. docling-studio on `8000:8000`) is already on it | Move docling-studio to `8002:8000` (the `docker-compose.dev.yml` default), then retry |
-| VLM request returns content with `null` instead of a string (Deep Extract path) | vLLM's CoT mode in Qwen3-VL puts the answer in `reasoning` and emits `content: null` | Known issue (2026-06-19, unfixed). Either pass `"chat_template_kwargs": {"enable_thinking": false}` per request, or run vLLM with `--enable-in-reasoning` and a `reasoning-parser`. The merge still works (just without the VLM-direct contribution). |
+| VLM request returns content with `null` instead of a string (Deep Extract path) | vLLM's CoT mode in Qwen3-VL puts the answer in `reasoning` and emits `content: null` | **Fixed 2026-06-26** (commit `464eb13`). Root cause was a monkey-patch on `requests.post` that Docling never calls — Docling uses `Session.send`. The patch now also intercepts `Session.send` and routes content through a `_process_vlm_response` helper that defends against `content: null` and falls back to `reasoning_content`. If you encounter this on a stale build, either upgrade to a build that includes the fix, or pass `"chat_template_kwargs": {"enable_thinking": false}` per request. |
 
 ## 10. Performance tuning knobs
 
