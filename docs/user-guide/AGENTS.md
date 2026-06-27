@@ -33,4 +33,4 @@ Project lead writes and maintains these. Domain experts review technical accurac
 
 ## Child DOX Index
 
-- `airgap-deployment-guide.md` — offline build + air-gapped deployment walkthrough (clone → build → transfer → .env → up)
+- `airgap-deployment-guide.md` — offline build + air-gapped deployment walkthrough covering the **full system** (5 images: document-parser, frontend, embedding, neo4j, opensearch) — clone → build/pull → transfer → load → .env → up. Includes ingestion profile toggle and a core-only appendix for parse+Ask-only deployments.
