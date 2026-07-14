@@ -27,6 +27,7 @@ Thumbs.db
 # Uploads & data
 uploads/
 data/
+deploy-airgap/hermes-data
 
 # Python
 __pycache__/
