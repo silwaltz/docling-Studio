@@ -14,8 +14,8 @@ Ops team owns the deployment; backend team owns the image composition (vLLM entr
 
 | File | Purpose |
 |---|---|
-| `Dockerfile.vllm` | Multi-stage build that bakes `cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit` into `vllm/vllm-openai:latest`. Stage 1 downloads weights via `huggingface_hub[cli]`; stage 2 copies the HF cache into the runtime image and sets `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`. The base image ships `python3` (not `python`); the entrypoint script calls `/usr/bin/python3` directly. |
-| `docker-compose.yml` | Brings up `vllm` (GPU, shm_size=8gb, healthcheck on `/v1/chat/completions`), `document-parser` (depends_on vllm healthy), and `frontend` (nginx). Backend reaches vLLM via in-network DNS `vllm:8000` — no host port published for vLLM. Ingestion services (embedding, OpenSearch, Neo4j) are deliberately omitted. |
+| `Dockerfile.vllm` | Multi-stage build that bakes `cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit` into `vllm/vllm-openai:latest`. Stage 1 downloads weights via `huggingface_hub[cli]` into the HF cache (no `--local-dir`); stage 2 copies the HF cache into the runtime image and sets `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`. The `vllm-entrypoint.sh` sets `VLLM_LIMIT_MM_PER_PROMPT='{"image":1}'` as a single-quoted shell variable and passes it as a separate argv token. Qwen3's reasoning/thinking mode is disabled by default via `--reasoning-parser qwen3 --default-chat-template-kwargs '{"enable_thinking": false}'`, so the model emits final content directly instead of consuming the `max_tokens` budget with reasoning tokens and hanging the VLM-direct calls. Runtime args are `--max-model-len=24576 --gpu-memory-utilization=0.85 --max-num-batched-tokens 4096` (quantization is auto-detected from the HF config, not forced via `--quantization`). The base image ships `python3` (not `python`); the entrypoint script calls `/usr/bin/python3` directly. |
+| `docker-compose.yml` | Brings up `vllm` (GPU, shm_size=8gb, healthcheck on `/v1/chat/completions`), `document-parser` (depends_on vllm healthy), and `frontend` (nginx). Backend reaches vLLM via in-network DNS `vllm:8000` — no host port published for vLLM. Ingestion services (embedding, OpenSearch, Neo4j) are deliberately omitted. The vLLM service uses the baked-in HF cache from the image (no named volume shadowing it) and sets `VLLM_WSL2_ENABLE_PIN_MEMORY=1` for WSL2/Docker Desktop compatibility. |
 | `.env.example` | Template for the air-gap host's `.env`. Pre-set for the co-located vLLM: `OPENAI_BASE_URL=http://vllm:8000/v1`, `CHAT_MODEL_ID=qwen3-vl:8b-instruct`, `CHAT_PROVIDER=openai`. `STORE_SECRET_KEY` is **optional** — only required if the operator later sets a per-store password in the UI; boot refuses closed only when `stores.connection_password_sealed IS NOT NULL` rows exist (`document-parser/main.py:_check_store_secret_key`). |
 | `export-bundle.sh` | Build-host script. Builds all three images for `linux/amd64`, runs the no-network converter check on the backend, `docker save`s each, `gzip`s, and emits `bundle/bundle.sha256`. |
 | `README.md` | Air-gap host bring-up instructions: architecture, image inventory, prereqs, `docker load` flow, smoke tests. |
@@ -24,7 +24,8 @@ Ops team owns the deployment; backend team owns the image composition (vLLM entr
 ## Local Contracts
 
 - **Platform**: All images built for `linux/amd64`. Cross-compiled via buildx + QEMU on Apple Silicon build hosts (required because `onnxruntime-gpu` has no arm64 wheels and the air-gap target is x86_64 Linux).
-- **Hardware**: ≥ 16 GB NVIDIA GPU (single GPU, AWQ-4bit fits at `gpu_memory_utilization=0.92` + `max-model-len=24576`), ≥ 64 GB system RAM, ≥ 100 GB free disk.
+- **Hardware**: ≥ 16 GB NVIDIA GPU (single GPU, AWQ-4bit fits at `gpu_memory_utilization=0.85` + `max-model-len=24576` + `max-num-batched-tokens 4096`; `max-num-batched-tokens` must exceed a single page image's vision-token count (~2-2.5k at `vlm_image_scale=2.0`, much more at `4.0`) or vLLM's chunked-prefill scheduler rejects the request), ≥ 64 GB system RAM, ≥ 100 GB free disk.
+- **Windows/WSL2 host note (2026-07-14)**: root `AGENTS.md`'s tested `24576`/`0.92` combo was validated on bare-metal Linux. On Windows + Docker Desktop/WSL2, the desktop compositor + WSL2 vGPU overhead compete for the same dedicated VRAM; `0.92` left too little headroom and Task Manager showed 15.7/16 GB dedicated + 2 GB spilled into "Shared GPU memory" (system RAM over PCIe) during a VLM-direct (image) call, tanking generation throughput to ~16-34 tok/s. Dropped to `0.85` for this reason — re-verify with `docker stats` + Task Manager after any host GPU driver/Windows update.
 - **Runtime**: NVIDIA driver R555+, `nvidia-container-toolkit` wired up (`nvidia-ctk runtime configure --runtime=docker`).
 - **Backend ↔ vLLM wiring**: backend reads `OPENAI_BASE_URL` (used by chat) and `VLM_OPENAI_URL` (used by the VLM-direct pipeline). Both must point to the in-network `http://vllm:8000/v1`. The model alias `qwen3-vl:8b-instruct` is baked into the vLLM image via `--served-model-name` and must match `CHAT_MODEL_ID` and `VLM_OLLAMA_MODEL` in `.env` (the backend enum name `VLM_BACKEND=ollama` stays for compatibility — routing is via the URL).
 - **Cold start**: vLLM takes 5–10 minutes on first boot (model load + CUDA graph capture). `start_period: 300s` on the vLLM healthcheck absorbs this; `depends_on.vllm.condition: service_healthy` blocks backend startup.
@@ -56,7 +57,7 @@ docker run --rm docling-studio-vllm:offline ls /root/.cache/huggingface/hub
 On the air-gap host, after `docker load` + `docker compose up -d`:
 
 ```bash
-docker exec docling-studio-backend curl -s http://vllm:8000/v1/models
+docker exec docling-studio-backend python -c "import urllib.request; print(urllib.request.urlopen('http://vllm:8000/v1/models').read().decode())"
 # → {"data":[{"id":"qwen3-vl:8b-instruct",...}]}
 curl http://localhost:8002/api/health
 ```

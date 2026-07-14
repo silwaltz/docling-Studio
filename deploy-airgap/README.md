@@ -82,9 +82,12 @@ docker compose up -d
 docker compose ps                          # vllm turns healthy after model load
 docker compose logs -f vllm                # wait for "Application startup complete."
 
+# If you are running on Docker Desktop / WSL2, the vLLM service also needs
+# VLLM_WSL2_ENABLE_PIN_MEMORY=1 (already set in docker-compose.yml).
+
 # 4. Smoke-test the full stack.
 curl http://localhost:8002/api/health
-docker exec docling-studio-backend curl -s http://vllm:8000/v1/models
+docker exec docling-studio-backend python -c "import urllib.request; print(urllib.request.urlopen('http://vllm:8000/v1/models').read().decode())"
 # Should list: {"data":[{"id":"qwen3-vl:8b-instruct",...}]}
 
 # Open http://localhost:3000 in a browser.

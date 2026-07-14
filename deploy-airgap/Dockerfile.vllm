@@ -38,11 +38,10 @@ RUN if [ -n "$HF_TOKEN" ]; then \
     fi
 RUN echo "[vllm-bake] Downloading ${VLLM_HF_MODEL} ..." \
     && hf download "$VLLM_HF_MODEL" \
-        --local-dir "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}" \
         --max-workers 8 \
-    && echo "[vllm-bake] Done. Snapshot contents:" \
-    && ls -lh "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}" \
-    && du -sh "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}"
+    && echo "[vllm-bake] Done. HF cache layout:" \
+    && ls -la /root/.cache/huggingface/hub \
+    && du -sh /root/.cache/huggingface/hub/*
 
 
 # --- Stage 2: runtime image (the actual vLLM server) ------------------------
@@ -81,8 +80,7 @@ RUN echo "[vllm-bake] HF cache layout after COPY:" \
 ENV VLLM_HF_MODEL=${VLLM_HF_MODEL} \
     VLLM_SERVED_MODEL_NAME=qwen3-vl:8b-instruct \
     VLLM_MAX_MODEL_LEN=24576 \
-    VLLM_GPU_MEM_UTIL=0.92 \
-    VLLM_LIMIT_MM_PER_PROMPT={"image":1} \
+    VLLM_GPU_MEM_UTIL=0.85 \
     VLLM_DTYPE=auto
 
 EXPOSE 8000
@@ -93,6 +91,9 @@ EXPOSE 8000
 RUN cat > /usr/local/bin/vllm-entrypoint.sh <<'EOF'
 #!/bin/sh
 set -eu
+# JSON string for --limit-mm-per-prompt. Single-quoted assignment keeps the
+# double quotes; the JSON is passed as a separate argv token.
+VLLM_LIMIT_MM_PER_PROMPT='{"image":1}'
 exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
     --model="$VLLM_HF_MODEL" \
     --served-model-name="$VLLM_SERVED_MODEL_NAME" \
@@ -100,9 +101,17 @@ exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
     --port="$VLLM_PORT" \
     --max-model-len="$VLLM_MAX_MODEL_LEN" \
     --gpu-memory-utilization="$VLLM_GPU_MEM_UTIL" \
-    --limit-mm-per-prompt="$VLLM_LIMIT_MM_PER_PROMPT" \
-    --dtype="$VLLM_DTYPE"
+    --dtype="$VLLM_DTYPE" \
+    --max-num-batched-tokens 4096 \
+    --limit-mm-per-prompt "$VLLM_LIMIT_MM_PER_PROMPT" \
+    --reasoning-parser qwen3 \
+    --default-chat-template-kwargs '{"enable_thinking": false}'
 EOF
 RUN chmod +x /usr/local/bin/vllm-entrypoint.sh
+
+# Strip any CRLF that may have been baked in by a Windows Git autocrlf checkout.
+RUN tr -d '\r' < /usr/local/bin/vllm-entrypoint.sh > /usr/local/bin/vllm-entrypoint.sh.tmp && \
+    mv /usr/local/bin/vllm-entrypoint.sh.tmp /usr/local/bin/vllm-entrypoint.sh && \
+    chmod +x /usr/local/bin/vllm-entrypoint.sh
 
 ENTRYPOINT ["/usr/local/bin/vllm-entrypoint.sh"]
