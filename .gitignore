@@ -50,6 +50,10 @@ profiles/
 # E2E tests — Maven build outputs & Chrome user data
 e2e/**/target/
 
+# Air-gap deployment — bundle/ holds huge built image tarballs (~20 GB).
+# Re-generate on the build host with deploy-airgap/export-bundle.sh.
+deploy-airgap/bundle/
+
 # Local-only artifacts (release/0.6.0 bootstrap)
 .github/ISSUE_TEMPLATE/issue.md
 docs/claude-code-commands.md

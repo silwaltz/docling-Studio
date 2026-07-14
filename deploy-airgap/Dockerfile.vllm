@@ -1,0 +1,108 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# docling-studio-vllm:offline — air-gapped vLLM server
+#
+# Bakes the cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit model into the image so the
+# air-gap host never touches HF Hub. The runtime image is the official
+# `vllm/vllm-openai` image with the model pre-staged in the HF cache that vLLM
+# reads on startup.
+#
+# Build (online, once on the build host):
+#   docker build --platform linux/amd64 \
+#     -f deploy-airgap/Dockerfile.vllm \
+#     --build-arg VLLM_BASE=vllm/vllm-openai:latest \
+#     --build-arg VLLM_HF_MODEL=cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit \
+#     -t docling-studio-vllm:offline \
+#     deploy-airgap/
+#
+# Image size: ~17 GB (vLLM base ~10 GB + model ~7 GB).
+# =============================================================================
+
+# --- Stage 1: download the model weights (needs internet) -------------------
+# Pulling with a small Python image keeps the build-context footprint tiny.
+# HF cache layout matches what vLLM expects at runtime.
+FROM python:3.12-slim AS model-baker
+
+ARG VLLM_HF_MODEL=cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit
+# If the model is ever gated, pass --build-arg HF_TOKEN=hf_xxx.
+ARG HF_TOKEN=""
+
+ENV HF_HOME=/root/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub \
+    HF_HUB_ENABLE_HF_TRANSFER=0
+
+RUN pip install --no-cache-dir "huggingface_hub[cli]>=0.24"
+RUN if [ -n "$HF_TOKEN" ]; then \
+        echo "[vllm-bake] Authenticating with HF_TOKEN"; \
+        hf auth login --token "$HF_TOKEN" || true; \
+    fi
+RUN echo "[vllm-bake] Downloading ${VLLM_HF_MODEL} ..." \
+    && hf download "$VLLM_HF_MODEL" \
+        --local-dir "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}" \
+        --max-workers 8 \
+    && echo "[vllm-bake] Done. Snapshot contents:" \
+    && ls -lh "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}" \
+    && du -sh "/root/.cache/huggingface/hub/${VLLM_HF_MODEL}"
+
+
+# --- Stage 2: runtime image (the actual vLLM server) ------------------------
+# ARG before FROM must NOT have a default — defaults don't apply in FROM.
+# Pass --build-arg VLLM_BASE=... to override. Default is set via shell-style
+# substitution below for compatibility.
+ARG VLLM_BASE
+FROM ${VLLM_BASE:-vllm/vllm-openai:latest}
+
+ARG VLLM_HF_MODEL=cyankiwi/Qwen3-VL-8B-Instruct-AWQ-4bit
+
+ENV HF_HOME=/root/.cache/huggingface \
+    HUGGINGFACE_HUB_CACHE=/root/.cache/huggingface/hub \
+    TRANSFORMERS_CACHE=/root/.cache/huggingface/hub \
+    # Belt-and-braces: stop vLLM from phoning home at runtime.
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    # vLLM OpenAI server binds on all interfaces inside the container.
+    VLLM_HOST=0.0.0.0 \
+    VLLM_PORT=8000
+
+# Bake the model weights from the builder stage. vLLM finds them via HF_HOME
+# when started with --model=<HF repo id>.
+COPY --from=model-baker /root/.cache/huggingface /root/.cache/huggingface
+
+# Smoke test: confirm the HF cache survives and the model snapshot is visible.
+RUN echo "[vllm-bake] HF cache layout after COPY:" \
+    && ls -la /root/.cache/huggingface/hub \
+    && du -sh /root/.cache/huggingface/hub/* \
+    && echo "[vllm-bake] Model ready: ${VLLM_HF_MODEL}"
+
+# Default runtime args. Override at compose time if you need a different
+# --max-model-len / --gpu-memory-utilization / etc.
+# `vllm/vllm-openai`'s ENTRYPOINT already runs `python -m
+# vllm.entrypoints.openai.api_server`; these become CLI args.
+ENV VLLM_HF_MODEL=${VLLM_HF_MODEL} \
+    VLLM_SERVED_MODEL_NAME=qwen3-vl:8b-instruct \
+    VLLM_MAX_MODEL_LEN=24576 \
+    VLLM_GPU_MEM_UTIL=0.92 \
+    VLLM_LIMIT_MM_PER_PROMPT={"image":1} \
+    VLLM_DTYPE=auto
+
+EXPOSE 8000
+
+# A tiny entrypoint wrapper that translates the env vars above into CLI args.
+# Keeps the compose service clean (no long command: block).
+# The vLLM base image ships `python3` (not `python`) at /usr/bin/python3.
+RUN cat > /usr/local/bin/vllm-entrypoint.sh <<'EOF'
+#!/bin/sh
+set -eu
+exec /usr/bin/python3 -m vllm.entrypoints.openai.api_server \
+    --model="$VLLM_HF_MODEL" \
+    --served-model-name="$VLLM_SERVED_MODEL_NAME" \
+    --host="$VLLM_HOST" \
+    --port="$VLLM_PORT" \
+    --max-model-len="$VLLM_MAX_MODEL_LEN" \
+    --gpu-memory-utilization="$VLLM_GPU_MEM_UTIL" \
+    --limit-mm-per-prompt="$VLLM_LIMIT_MM_PER_PROMPT" \
+    --dtype="$VLLM_DTYPE"
+EOF
+RUN chmod +x /usr/local/bin/vllm-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/vllm-entrypoint.sh"]

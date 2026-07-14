@@ -1,0 +1,94 @@
+# =============================================================================
+# Docling Studio — Air-gap deployment (SINGLE MACHINE)
+#
+# Brings up the entire stack on one Linux host (with NVIDIA GPU):
+#   - vllm       :8000  (Qwen3-VL-8B-Instruct-AWQ-4bit)
+#   - document-parser   :8000 (host :8002)
+#   - frontend   :80    (host :3000)
+#
+# Differences from the upstream docker-compose.yml:
+#   - Every `build:` replaced with `image:` (air-gap host cannot build).
+#   - All three services share one compose project so they share a Docker
+#     network; backend reaches vLLM via the in-network DNS name `vllm:8000`.
+#   - vLLM gets NVIDIA GPU + ipc=host + shm_size=8gb for tensor parallel.
+#   - Ingestion-profile services (embedding / opensearch / neo4j) removed.
+#
+# Layout on the air-gap host after `docker load -i`:
+#   /opt/docling-studio/
+#     docker-compose.yml   (this file)
+#     .env                 (filled from .env.example)
+#     # bundles/         (the .tar.gz files live here, can be deleted after load)
+# =============================================================================
+
+services:
+  # --- vLLM (Qwen3-VL-8B-Instruct-AWQ-4bit) ---------------------------------
+  vllm:
+    image: docling-studio-vllm:offline       # ✅ airgap change: build: → image:
+    container_name: docling-studio-vllm
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '8gb'
+    # Bind-mount the host HF cache so model weights survive container
+    # restarts (the image already bakes a copy in, but the bind-mount is the
+    # canonical runtime path).
+    volumes:
+      - vllm_hf_cache:/root/.cache/huggingface
+    # Internal only — backend talks to vLLM via the shared compose network.
+    expose:
+      - "8000"
+    healthcheck:
+      # vLLM /v1/chat/completions with max_tokens=1 — turns green only after
+      # the model is loaded + CUDA graphs compiled (~5-10 min cold start).
+      test:
+        - CMD-SHELL
+        - 'curl -sf http://localhost:8000/v1/chat/completions -H ''Content-Type: application/json'' -d ''{"model":"qwen3-vl:8b-instruct","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'''
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 300s
+
+  # --- Backend (FastAPI) -----------------------------------------------------
+  document-parser:
+    image: docling-studio-backend:offline   # ✅ airgap change
+    container_name: docling-studio-backend
+    restart: unless-stopped
+    expose:
+      - "8000"   # only the frontend nginx needs to reach this
+    ports:
+      - "8002:8000"   # host :8002 → container :8000 (debug)
+    volumes:
+      - uploads_data:/app/uploads
+      - db_data:/app/data
+    env_file:
+      - .env
+    depends_on:
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # --- Frontend (Vue + nginx) ------------------------------------------------
+  frontend:
+    image: docling-studio-frontend:offline   # ✅ airgap change
+    container_name: docling-studio-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      document-parser:
+        condition: service_healthy
+
+volumes:
+  uploads_data:
+  db_data:
+  vllm_hf_cache:

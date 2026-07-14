@@ -185,3 +185,7 @@ These are things that have bitten us and will bite again. Document once, never d
   - `README.md` - Project overview and setup
   - `CONTRIBUTING.md` - Contribution guidelines
   - `CHANGELOG.md` - Version history
+
+### Deployment
+
+- **`deploy-airgap/`** - Single-machine air-gap deployment artifact (vLLM + backend + frontend, no ingestion). Image bundle built once on a connected host, transferred to the air-gap host, `docker load`'d, and brought up via `docker-compose.yml`. See `deploy-airgap/AGENTS.md` for contracts and `deploy-airgap/README.md` for the bring-up guide. `bundle/` is gitignored — regenerate with `deploy-airgap/export-bundle.sh`.
