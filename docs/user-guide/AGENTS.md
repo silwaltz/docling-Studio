@@ -33,4 +33,4 @@ Project lead writes and maintains these. Domain experts review technical accurac
 
 ## Child DOX Index
 
-- `airgap-deployment-guide.md` — offline build + air-gapped deployment walkthrough covering the **full system** (5 images: document-parser, frontend, embedding, neo4j, opensearch) — clone → build/pull → transfer → load → .env → up. Includes ingestion profile toggle and a core-only appendix for parse+Ask-only deployments.
+- `airgap-deployment-guide.md` — offline build + air-gapped deployment walkthrough covering the **full system** (5 images: document-parser, frontend, embedding, neo4j, opensearch) — clone → build/pull → transfer → load → .env → up. Includes ingestion profile toggle, a core-only appendix (§15.6) for parse+Ask-only deployments, and a single-machine vLLM-bundled variant appendix (§15.7) pointing at `deploy-airgap/` for hosts that don't have a client-provided vLLM. All `docker build` commands require `--platform linux/amd64` when the build host is Apple Silicon — without it the resulting images are `linux/arm64` and won't run on the x86_64 air-gap host (`onnxruntime-gpu` has no arm64 wheels on PyPI).

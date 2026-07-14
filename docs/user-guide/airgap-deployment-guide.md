@@ -1,9 +1,11 @@
 # Docling Studio — Air-Gapped Deployment Guide (中英對照)
 
-> **Last verified against**: `docling-studio-backend:offline`, `docling-studio-frontend:offline`, `docling-studio-embedding:offline`, `neo4j:5.15-community`, `opensearchproject/opensearch:2` images, commit on `main` branch (2026-06-27).
+> **Last verified against**: `docling-studio-backend:offline`, `docling-studio-frontend:offline`, `docling-studio-embedding:offline`, `neo4j:5.15-community`, `opensearchproject/opensearch:2` images, commit on `main` branch (2026-06-27); Apple Silicon `--platform linux/amd64` cross-build note + vLLM offline image variant verified 2026-07-14 against `deploy-airgap/`.
 > **Audience**: customer's deployment engineer. Junior-friendly — assumes Docker basics, no prior Docling / vLLM / Neo4j / OpenSearch experience.
 > **Read time**: ~35 minutes. **Hands-on time**: ~2 hours (mostly waiting for Docker builds + image transfer).
 > **Scope**: this guide covers the **full production system** — backend, frontend, embedding service, Neo4j, and OpenSearch. The vLLM container stays at the client side (out of scope for our image bundle).
+>
+> **Single-machine vLLM variant**: if the client does not provide their own vLLM server, the `deploy-airgap/` folder in this repo ships a self-contained 3-image bundle (vLLM with Qwen3-VL-8B-AWQ-4bit baked in + backend + frontend) for one Linux+NVIDIA host. See the appendix at the bottom of this guide.
 
 ---
 
@@ -59,6 +61,7 @@ The backend, the embedding service, and the frontend all need to reach external 
 | `neo4j` (graph DB) | 官方 image / official `neo4j:5.15-community` | ✅ Yes | 只有用 ingestion profile 才需要 / only if using ingestion |
 | `opensearch` (search) | 官方 image / official `opensearchproject/opensearch:2` | ✅ Yes | 只有用 ingestion profile 才需要 / only if using ingestion |
 | `vllm` (Qwen3-VL) | 客戶提供 / client-provided | ❌ No — 客戶自己架 | 必需（由客戶部署）/ required (client hosts it) |
+| `vllm` (Qwen3-VL) — **單機變體** / single-machine variant | 自建（deploy-airgap/Dockerfile.vllm）/ our Dockerfile | ✅ Yes — 見附錄 | 選用：客戶沒 vLLM 時改用這個 / optional: use when client doesn't provide vLLM |
 | `opensearch-dashboards` | 官方 image / official | ❌ No — **dev only** | 不需要 / not needed |
 
 > 💡 **Ingestion profile 是什麼？/ What's the ingestion profile?** Neo4j / OpenSearch / embedding 構成一條 ingestion pipeline：把 PDF 切成 chunks → 用 embedding 算向量 → 存到 OpenSearch 跟 Neo4j 提供搜尋跟圖查詢。如果你只需要上傳 → 轉檔 → Ask，**這 3 個容器都不用建**。詳見 [15.6 附錄：只跑核心服務 / Appendix: core-only deployment](#156-附錄只跑核心服務--appendix-core-only-deployment)。
@@ -151,6 +154,10 @@ docker --version
 git --version
 Get-PSDrive C | Select-Object Used,Free
 ```
+
+> ⚠️ **Build host 是 Apple Silicon (M1/M2/M3/M4)？/ Build host is Apple Silicon?** Air-gap host 一定是 x86_64 Linux，但 build host 可以是 arm64 macOS。在 arm64 上跑 `docker build` 預設會產出 `linux/arm64` image，**部署過去會直接失敗**（`onnxruntime-gpu` 在 PyPI 上沒有 arm64 wheel）。Step 6 的每一個 `docker build` 都加上 `--platform linux/amd64` 旗標，buildx 會透過 QEMU 交叉編譯。
+>
+> ⚠️ **Build host on Apple Silicon (M1/M2/M3/M4)?** The air-gap host is always x86_64 Linux, but the build host can be arm64 macOS. A default `docker build` on arm64 produces a `linux/arm64` image, which **fails to run on the air-gap host** (`onnxruntime-gpu` has no arm64 wheels on PyPI). Every `docker build` in Step 6 must include `--platform linux/amd64` — buildx cross-compiles via QEMU. Expect ~2× longer build times because of emulation.
 
 ### 3.3 客戶會提供給你 / What the client provides
 
@@ -252,6 +259,7 @@ We'll produce **5 images**. 3 we build, 2 we pull from Docker Hub.
 
 ```bash
 docker build \
+    --platform linux/amd64 \
     --target local \
     -t docling-studio-backend:offline \
     -f document-parser/Dockerfile \
@@ -314,6 +322,7 @@ If you see `downloads disabled` or timeouts, the models weren't baked in correct
 
 ```bash
 docker build \
+    --platform linux/amd64 \
     -t docling-studio-frontend:offline \
     -f frontend/Dockerfile \
     frontend/
@@ -339,6 +348,7 @@ You only need this image if you're using the ingestion profile (search, graph qu
 
 ```bash
 docker build \
+    --platform linux/amd64 \
     -t docling-studio-embedding:offline \
     -f embedding-service/Dockerfile \
     embedding-service/
@@ -1321,6 +1331,26 @@ If the customer only needs upload + parse + Ask (no ingestion / RAG / graph), yo
 
 After this, your deployment runs only `document-parser` + `frontend`, and the bundle drops from 9-11 GB to 7-9 GB.
 
+### 15.7 附錄：自帶 vLLM 變體（單機 3 container）/ Appendix: bundled-vLLM variant (single-host 3 containers)
+
+If the client does **not** provide their own vLLM server, the repo ships a self-contained variant in `deploy-airgap/`: an offline vLLM image with Qwen3-VL-8B-Instruct-AWQ-4bit baked in, plus the same backend + frontend, all on one Linux+NVIDIA host. Use this when the deployment must be fully self-contained with no external LLM dependency.
+
+如果客戶**不**提供 vLLM server，repo 在 `deploy-airgap/` 提供了一個自帶變體：vLLM image 烤好 Qwen3-VL-8B-Instruct-AWQ-4bit 權重，加上同樣的 backend + frontend，全部跑在同一台 Linux+NVIDIA 主機上。當部署必須完全自足、不能依賴外部 LLM 時用這個。
+
+**差異（vs. §15.6 core-only）/ Differences (vs. §15.6 core-only)**:
+
+| 項目 / Item | §15.6 core-only (client-vLLM) | deploy-airgap/ (bundled-vLLM) |
+|---|---|---|
+| Build 數量 / # of builds | 2 (backend + frontend) | 3 (+ vLLM with baked model weights) |
+| Image bundle 大小 / Bundle size | ~7-9 GB | **~20 GB**（vLLM base 10 GB + Qwen3-VL-AWQ-4bit 7 GB + backend 17 GB）|
+| 啟動服務 / # of services | 2 | 3 (vllm + backend + frontend on shared compose network) |
+| vLLM 來源 / vLLM source | Client-provided (separate host) | Co-located container, baked model |
+| Backend → vLLM wiring | `OPENAI_BASE_URL=http://<client-vllm-host>:8000/v1` | `OPENAI_BASE_URL=http://vllm:8000/v1`（in-network DNS）|
+
+**Steps**: see `deploy-airgap/README.md` for the full bring-up flow. The build host runs `./deploy-airgap/export-bundle.sh` (one script — builds + saves + gzips + sha256s all three images for `linux/amd64`). The air-gap host then `docker load`s `vllm.tar`, `backend.tar`, `frontend.tar` and `docker compose up -d`. vLLM takes 5–10 minutes to load the model on first start; the backend's `depends_on: vllm.condition: service_healthy` blocks until it's ready.
+
+**步驟**：完整流程見 `deploy-airgap/README.md`。Build host 跑 `./deploy-airgap/export-bundle.sh`（單一腳本 — 自動 build + save + gzip + sha256，全部三個 image 走 `linux/amd64`）。Air-gap host 接著 `docker load` `vllm.tar` / `backend.tar` / `frontend.tar` 然後 `docker compose up -d`。vLLM 第一次啟動要 5–10 分鐘載模型；backend 的 `depends_on: vllm.condition: service_healthy` 會等到 vLLM ready 才啟動。
+
 ---
 
 ## 變更紀錄 / Change log
@@ -1329,3 +1359,4 @@ After this, your deployment runs only `document-parser` + `frontend`, and the bu
 |---|---|---|
 | 2026-06-26 | 1.0 | 初版：clone → build → transfer → .env → up 全流程（只含 document-parser image） / Initial release: full walkthrough (document-parser only) |
 | 2026-06-27 | 1.1 | **擴充為完整系統 / Expanded to full system**：加上 frontend、embedding、Neo4j、OpenSearch 4 個 image 的 build / transfer / load 流程。新增 ingestion profile 開關、最小化部署附錄（15.6）、image inventory 對照表。 / Added build / transfer / load for frontend, embedding, Neo4j, OpenSearch images. Added ingestion profile toggle, core-only deployment appendix (15.6), image inventory table. |
+| 2026-07-14 | 1.2 | **加入 `--platform linux/amd64` 旗標 / Added `--platform linux/amd64` flag**：在 Apple Silicon (arm64) build host 上必須強制交叉編譯，否則 image 跑不動 air-gap x86_64 host（`onnxruntime-gpu` 沒 arm64 wheel）。3 個 build 指令都補上。**新增 §15.7 自帶 vLLM 變體附錄**：指向 repo 內 `deploy-airgap/` 資料夾，把 Qwen3-VL-8B-AWQ-4bit 烤成 image，單機跑 vLLM + backend + frontend。 / Required on Apple Silicon build hosts; arm64 wheels don't exist for `onnxruntime-gpu`. Added §15.7 single-host 3-container variant appendix pointing to `deploy-airgap/`. |
